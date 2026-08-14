@@ -33,9 +33,9 @@
 #define STANDBY_MODE_TYPE  1
 
 // ================= SOLAR & GEOLOCATION =================
-#define DEFAULT_LATITUDE   55.7558f    // Latitude for Sunset/Sunrise calculation (Moscow)
-#define DEFAULT_LONGITUDE  37.6173f    // Longitude
-#define TIMEZONE_OFFSET_H  3           // UTC Offset in hours (e.g. +3 for MSK)
+#define DEFAULT_LATITUDE   54.2276f    // Latitude for Sunset/Sunrise calculation (Borisov, Belarus)
+#define DEFAULT_LONGITUDE  28.5052f    // Longitude (Borisov, Belarus)
+#define TIMEZONE_OFFSET_H  3           // UTC Offset in hours (UTC+3 Europe/Minsk)
 #define SUNSET_OFFSET_MIN  -30         // Start lighting 30 min before sunset
 #define SUNRISE_OFFSET_MIN 0           // Stop lighting at sunrise
 

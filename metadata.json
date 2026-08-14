@@ -1,6 +1,6 @@
 {
   "name": "ESP32 Smart Staircase Controller",
   "description": "ESP32 addressable LED staircase lighting with dual motion sensors, sunset/sunrise auto-scheduling, GitHub Actions CI/CD auto-builds, and WiFi OTA updates.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

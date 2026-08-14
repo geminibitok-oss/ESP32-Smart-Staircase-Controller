@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sliders, MapPin, Wifi, GitBranch, Sparkles, Cpu, Eye } from 'lucide-react';
 import { StaircaseConfig } from '../types';
+import { LocationPicker } from './LocationPicker';
 
 interface ConfigPanelProps {
   config: StaircaseConfig;
@@ -8,17 +9,6 @@ interface ConfigPanelProps {
 }
 
 export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onChange }) => {
-  // City Presets for fast solar coordinate settings
-  const cityPresets = [
-    { name: 'Москва', lat: 55.7558, lon: 37.6173, tz: 3 },
-    { name: 'Санкт-Петербург', lat: 59.9343, lon: 30.3351, tz: 3 },
-    { name: 'Киев', lat: 50.4501, lon: 30.5234, tz: 2 },
-    { name: 'Минск', lat: 53.9006, lon: 27.5590, tz: 3 },
-    { name: 'Алматы', lat: 43.2220, lon: 76.8512, tz: 5 },
-    { name: 'Лондон', lat: 51.5074, lon: -0.1278, tz: 0 },
-    { name: 'Берлин', lat: 52.5200, lon: 13.4050, tz: 1 },
-  ];
-
   return (
     <div id="config-panel" className="w-full bg-slate-900/90 rounded-2xl border border-slate-800 p-5 md:p-6 shadow-xl text-slate-100 space-y-6">
       {/* Header */}
@@ -119,54 +109,16 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onChange }) =>
             2. Солнечное расписание (Закат / Рассвет)
           </div>
 
-          <div className="space-y-3 text-xs">
-            <div>
-              <label className="text-slate-300 block mb-1">Быстрый выбор города:</label>
-              <div className="flex flex-wrap gap-1.5">
-                {cityPresets.map((city) => (
-                  <button
-                    key={city.name}
-                    onClick={() => onChange({ latitude: city.lat, longitude: city.lon, timezoneOffsetHours: city.tz })}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 border border-slate-700"
-                  >
-                    {city.name}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <LocationPicker compact config={config} onChange={onChange} />
 
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-0.5">Широта (Latitude)</label>
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={config.latitude}
-                  onChange={(e) => onChange({ latitude: Number(e.target.value) })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs font-mono text-sky-300"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-0.5">Долгота (Longitude)</label>
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={config.longitude}
-                  onChange={(e) => onChange({ longitude: Number(e.target.value) })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-xs font-mono text-sky-300"
-                />
-              </div>
+          <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Смещение включения:</span>
+              <span className="text-emerald-400 font-semibold font-mono">За 30 мин до заката</span>
             </div>
-
-            <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-300 space-y-1">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Смещение включения:</span>
-                <span className="text-emerald-400 font-semibold font-mono">За 30 мин до заката</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Смещение выключения:</span>
-                <span className="text-slate-300 font-semibold font-mono">В момент рассвета</span>
-              </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Смещение выключения:</span>
+              <span className="text-slate-300 font-semibold font-mono">В момент рассвета</span>
             </div>
           </div>
         </div>

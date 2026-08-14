@@ -24,12 +24,13 @@ import { StairsSimulator } from './components/StairsSimulator';
 import { WiringDiagram } from './components/WiringDiagram';
 import { CodeExplorer } from './components/CodeExplorer';
 import { GitHubWorkflowGuide } from './components/GitHubWorkflowGuide';
+import { GitHubReleaseSelector } from './components/GitHubReleaseSelector';
 import { DeviceWebPreview } from './components/DeviceWebPreview';
 import { ConfigPanel } from './components/ConfigPanel';
 import { downloadProjectAsZip } from './utils/zipExporter';
 
 export default function App() {
-  // Master Configuration State
+  // Master Configuration State (Default: Borisov, Belarus)
   const [config, setConfig] = useState<StaircaseConfig>({
     stepCount: 14,
     ledsPerStep: 20,
@@ -48,9 +49,9 @@ export default function App() {
     standbyBrightness: 25,
     standbyMode: 'edge_steps',
 
-    latitude: 55.7558,
-    longitude: 37.6173,
-    timezoneOffsetHours: 3, // MSK UTC+3
+    latitude: 54.2276, // Borisov, Belarus (По умолчанию)
+    longitude: 28.5052,
+    timezoneOffsetHours: 3, // UTC+3 Europe/Minsk
     sunsetOffsetMinutes: -30, // 30 mins before sunset
     sunriseOffsetMinutes: 0,
     ntpServer: 'pool.ntp.org',
@@ -62,7 +63,7 @@ export default function App() {
     githubUsername: 'geminibitok-oss',
     githubRepo: 'ESP32-Smart-Staircase-Controller',
     githubBranch: 'main',
-    firmwareVersion: '1.0.0',
+    firmwareVersion: '1.0.4',
     otaCheckIntervalMinutes: 60,
     enableAutoOta: true,
   });
@@ -261,9 +262,13 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 4: GitHub CI/CD & OTA Workflow */}
+        {/* Tab 4: GitHub CI/CD & OTA Workflow & Release Selector */}
         {activeTab === 'github' && (
           <div className="space-y-6">
+            <GitHubReleaseSelector 
+              config={config} 
+              onSelectVersion={(ver) => handleUpdateConfig({ firmwareVersion: ver })} 
+            />
             <GitHubWorkflowGuide config={config} />
           </div>
         )}

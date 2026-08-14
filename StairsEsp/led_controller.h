@@ -23,7 +23,7 @@ enum StairState {
 
 class StairLedController {
 public:
-    CRGB leds[TOTAL_LEDS];
+    CRGB leds[MAX_TOTAL_LEDS];
     StairState currentState = STATE_IDLE_DAY;
     Direction currentDirection = DIR_NONE;
     
@@ -32,11 +32,20 @@ public:
     unsigned long lastStepTime = 0;
     unsigned long motionHoldTimer = 0;
 
+    uint8_t numSteps = DEFAULT_NUM_STEPS;
+    uint8_t ledsPerStep = DEFAULT_LEDS_STEP;
+
+    uint32_t stepAnimSpeed = STEP_ANIM_SPEED_MS;
+    uint32_t holdTimeSec = HOLD_TIME_SECONDS;
+    uint8_t activeBrightness = ACTIVE_BRIGHTNESS;
+    uint8_t standbyBrightness = STANDBY_BRIGHTNESS;
+    uint8_t standbyModeType = STANDBY_MODE_TYPE;
+
     void begin() {
-        FastLED.addLeds<WS2812B, PIN_LED_DATA, GRB>(leds, TOTAL_LEDS).setCorrection(TypicalLEDStrip);
-        FastLED.setBrightness(ACTIVE_BRIGHTNESS);
+        FastLED.addLeds<WS2812B, PIN_LED_DATA, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip);
+        FastLED.setBrightness(activeBrightness);
         FastLED.clear(true);
-        Serial.println("[LEDS] FastLED initialized for " + String(NUM_STEPS) + " steps (" + String(TOTAL_LEDS) + " total LEDs)");
+        Serial.println("[LEDS] FastLED initialized for up to " + String(MAX_TOTAL_LEDS) + " LEDs");
     }
 
     void setColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -93,18 +102,18 @@ public:
                 break;
 
             case STATE_ANIMATING_IN:
-                if (now - lastStepTime >= STEP_ANIM_SPEED_MS) {
+                if (now - lastStepTime >= stepAnimSpeed) {
                     lastStepTime = now;
                     
                     int stepToLight = (currentDirection == DIR_UP) 
                         ? currentStepProgress 
-                        : (NUM_STEPS - 1 - currentStepProgress);
+                        : (numSteps - 1 - currentStepProgress);
 
-                    lightUpStep(stepToLight, primaryColor, ACTIVE_BRIGHTNESS);
+                    lightUpStep(stepToLight, primaryColor, activeBrightness);
                     FastLED.show();
 
                     currentStepProgress++;
-                    if (currentStepProgress >= NUM_STEPS) {
+                    if (currentStepProgress >= numSteps) {
                         currentState = STATE_FULL_ACTIVE;
                         motionHoldTimer = now;
                     }
@@ -112,7 +121,7 @@ public:
                 break;
 
             case STATE_FULL_ACTIVE:
-                if (now - motionHoldTimer >= (HOLD_TIME_SECONDS * 1000UL)) {
+                if (now - motionHoldTimer >= (holdTimeSec * 1000UL)) {
                     Serial.println("[STAIRS] Hold time expired -> Starting fade out");
                     currentState = STATE_ANIMATING_OUT;
                     currentStepProgress = 0;
@@ -121,18 +130,18 @@ public:
                 break;
 
             case STATE_ANIMATING_OUT:
-                if (now - lastStepTime >= STEP_ANIM_SPEED_MS) {
+                if (now - lastStepTime >= stepAnimSpeed) {
                     lastStepTime = now;
 
                     int stepToDim = (currentDirection == DIR_UP) 
                         ? currentStepProgress 
-                        : (NUM_STEPS - 1 - currentStepProgress);
+                        : (numSteps - 1 - currentStepProgress);
 
                     clearStep(stepToDim);
                     FastLED.show();
 
                     currentStepProgress++;
-                    if (currentStepProgress >= NUM_STEPS) {
+                    if (currentStepProgress >= numSteps) {
                         currentState = isSolarNightActive ? STATE_STANDBY_NIGHT : STATE_IDLE_DAY;
                         currentDirection = DIR_NONE;
                     }
@@ -156,42 +165,50 @@ public:
 
 private:
     void lightUpStep(int stepIndex, CRGB color, uint8_t brightness) {
-        if (stepIndex < 0 || stepIndex >= NUM_STEPS) return;
-        int startIdx = stepIndex * LEDS_PER_STEP;
-        for (int i = 0; i < LEDS_PER_STEP; i++) {
-            leds[startIdx + i] = color;
+        if (stepIndex < 0 || stepIndex >= numSteps) return;
+        int startIdx = stepIndex * ledsPerStep;
+        for (int i = 0; i < ledsPerStep; i++) {
+            if (startIdx + i < MAX_TOTAL_LEDS) {
+                leds[startIdx + i] = color;
+            }
         }
     }
 
     void clearStep(int stepIndex) {
-        if (stepIndex < 0 || stepIndex >= NUM_STEPS) return;
-        int startIdx = stepIndex * LEDS_PER_STEP;
-        for (int i = 0; i < LEDS_PER_STEP; i++) {
-            leds[startIdx + i] = CRGB::Black;
+        if (stepIndex < 0 || stepIndex >= numSteps) return;
+        int startIdx = stepIndex * ledsPerStep;
+        for (int i = 0; i < ledsPerStep; i++) {
+            if (startIdx + i < MAX_TOTAL_LEDS) {
+                leds[startIdx + i] = CRGB::Black;
+            }
         }
     }
 
     void renderStandbyGlow() {
         FastLED.clear();
-#if STANDBY_MODE_TYPE == 1
-        lightUpStep(0, primaryColor, STANDBY_BRIGHTNESS);
-        lightUpStep(NUM_STEPS - 1, primaryColor, STANDBY_BRIGHTNESS);
-#elif STANDBY_MODE_TYPE == 2
-        for (int s = 0; s < NUM_STEPS; s++) {
-            lightUpStep(s, primaryColor, STANDBY_BRIGHTNESS);
+        if (standbyModeType == 1) {
+            lightUpStep(0, primaryColor, standbyBrightness);
+            if (numSteps > 1) {
+                lightUpStep(numSteps - 1, primaryColor, standbyBrightness);
+            }
+        } else if (standbyModeType == 2) {
+            for (int s = 0; s < numSteps; s++) {
+                lightUpStep(s, primaryColor, standbyBrightness);
+            }
+        } else if (standbyModeType == 3) {
+            uint8_t breath = beatsin8(15, standbyBrightness / 3, standbyBrightness);
+            for (int s = 0; s < numSteps; s++) {
+                lightUpStep(s, primaryColor, breath);
+            }
         }
-#elif STANDBY_MODE_TYPE == 3
-        uint8_t breath = beatsin8(15, STANDBY_BRIGHTNESS / 3, STANDBY_BRIGHTNESS);
-        for (int s = 0; s < NUM_STEPS; s++) {
-            lightUpStep(s, primaryColor, breath);
-        }
-#endif
     }
 
     void renderOtaAnimation() {
         static uint8_t hue = 140; // Cyan-Blue
         uint8_t beat = beatsin8(40, 50, 255);
-        for (int i = 0; i < TOTAL_LEDS; i++) {
+        int totalActiveLeds = numSteps * ledsPerStep;
+        if (totalActiveLeds > MAX_TOTAL_LEDS) totalActiveLeds = MAX_TOTAL_LEDS;
+        for (int i = 0; i < totalActiveLeds; i++) {
             leds[i] = CHSV(hue + (i * 2), 220, beat);
         }
     }

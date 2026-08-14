@@ -274,6 +274,7 @@ export default function App() {
             <DeviceWebPreview 
               config={config} 
               onColorChange={(hex) => handleUpdateConfig({ customHexColor: hex, colorScheme: 'custom' })}
+              onConfigUpdate={handleUpdateConfig}
             />
           </div>
         )}

@@ -6,8 +6,14 @@
 #include <Arduino.h>
 
 // ================= PHYSICAL CONFIGURATION =================
-#define NUM_STEPS          16        // Total number of stairs/steps
-#define LEDS_PER_STEP      30        // Number of WS2812B LEDs per step
+#define MAX_STEPS          32        // Maximum supported steps
+#define MAX_LEDS_PER_STEP  60        // Maximum LEDs per step
+#define MAX_TOTAL_LEDS     (MAX_STEPS * MAX_LEDS_PER_STEP)
+
+#define DEFAULT_NUM_STEPS  16        // Default steps count
+#define DEFAULT_LEDS_STEP  30        // Default LEDs per step
+#define NUM_STEPS          DEFAULT_NUM_STEPS
+#define LEDS_PER_STEP      DEFAULT_LEDS_STEP
 #define TOTAL_LEDS         (NUM_STEPS * LEDS_PER_STEP)
 
 // GPIO Pins (ESP32 DevKit V1)

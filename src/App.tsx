@@ -60,7 +60,7 @@ export default function App() {
     apSsid: 'ESP32-Stairs-Setup',
     apPassword: '12345678',
     githubUsername: 'geminibitok-oss',
-    githubRepo: 'StairFlow-ESP32-',
+    githubRepo: 'ESP32-Smart-Staircase-Controller',
     githubBranch: 'main',
     firmwareVersion: '1.0.0',
     otaCheckIntervalMinutes: 60,

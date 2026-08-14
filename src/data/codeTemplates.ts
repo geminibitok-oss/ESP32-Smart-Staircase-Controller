@@ -485,7 +485,7 @@ void loop() {
 
 // GitHub Auto-OTA Repository
 #define GITHUB_USER        "${config.githubUsername || 'geminibitok-oss'}"
-#define GITHUB_REPO        "${config.githubRepo || 'StairFlow-ESP32-'}"
+#define GITHUB_REPO        "${config.githubRepo || 'ESP32-Smart-Staircase-Controller'}"
 #define GITHUB_BRANCH      "${config.githubBranch || 'main'}"
 #define OTA_CHECK_MINUTES  ${config.otaCheckIntervalMinutes}       // Check GitHub for new releases every X min
 

@@ -43,7 +43,7 @@
 
 // GitHub Auto-OTA Repository
 #define GITHUB_USER        "geminibitok-oss"
-#define GITHUB_REPO        "StairFlow-ESP32-"
+#define GITHUB_REPO        "ESP32-Smart-Staircase-Controller"
 #define GITHUB_BRANCH      "main"
 #define OTA_CHECK_MINUTES  60       // Check GitHub for new releases every X min
 

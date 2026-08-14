@@ -35,103 +35,364 @@ lib_deps =
     https://github.com/me-no-dev/AsyncTCP.git
 `;
 
-  // 2. flash_windows.bat (Windows 1-Click Flasher with Setup Wizard)
+  // 2. flash_windows.bat (Windows 1-Click Flasher with Local File Picker & GitHub Releases Downloader)
   const flashWindowsBat = `@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
 title ESP32 Smart Staircase - Firmware Flasher & Setup Wizard
 
+:MAIN_MENU
+cls
 echo ======================================================================
-echo    🌟 ESP32 Smart Staircase Controller - Flasher & Setup Wizard
+echo    🌟 ESP32 Smart Staircase Controller - Firmware Flasher & Manager
+echo ======================================================================
+echo.
+echo Репозиторий: ${config.githubUsername || 'USER'}/${config.githubRepo || 'REPO'} (Текущая конфигурация: v${config.firmwareVersion || '1.0.4'})
+echo.
+echo Выберите действие:
+echo.
+echo   [1] ⚡ Прошить текущую локальную версию (Автоопределение файлов в папке)
+echo   [2] 📁 Выбрать локальный .bin файл на компьютере (Вручную / Drag-and-Drop)
+echo   [3] 🌐 Выбрать и скачать версию прошивки из GitHub Releases
+echo   [4] 📶 Беспроводное OTA-обновление по Wi-Fi (без USB кабеля)
+echo   [5] ⚙️  Мастер настройки параметров лестницы через USB (Wi-Fi, LED, цвета)
+echo   [6] 📟 Открыть Монитор Serial Порта (Live Логи 115200 бод)
+echo   [7] 🚪 Выход
+echo.
+set "MENU_CHOICE="
+set /p MENU_CHOICE="Введите номер пункта (1-7) [По умолчанию 1]: "
+if "%MENU_CHOICE%"=="" set MENU_CHOICE=1
+
+if "%MENU_CHOICE%"=="1" goto FLASH_LOCAL_AUTO
+if "%MENU_CHOICE%"=="2" goto FLASH_LOCAL_MANUAL
+if "%MENU_CHOICE%"=="3" goto GITHUB_RELEASE_PICKER
+if "%MENU_CHOICE%"=="4" goto OTA_WIFI_UPDATE
+if "%MENU_CHOICE%"=="5" goto USB_SETUP_WIZARD
+if "%MENU_CHOICE%"=="6" goto OPEN_SERIAL_TERMINAL
+if "%MENU_CHOICE%"=="7" goto EXIT_SCRIPT
+
+echo [!] Неверный ввод. Пожалуйста, введите цифру от 1 до 7.
+timeout /t 2 >nul
+goto MAIN_MENU
+
+:: ======================================================================
+:: 1. Auto-flash local firmware files found in current directory
+:: ======================================================================
+:FLASH_LOCAL_AUTO
+cls
+echo ======================================================================
+echo  ⚡ [Режим 1] Автопоиск и прошивка локальных файлов
 echo ======================================================================
 echo.
 
-:: 1. Check or Auto-Download esptool.exe
-if exist "%~dp0esptool.exe" goto ESPTOOL_OK
+call :ENSURE_ESPTOOL
 
-echo [*] esptool.exe not found in this folder.
-echo [*] Downloading official esptool.exe for Windows from GitHub...
-echo.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip', '%~dp0esptool.zip')"
-
-if exist "%~dp0esptool.zip" (
-    echo [*] Unpacking esptool.exe...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%~dp0esptool.zip' -DestinationPath '%~dp0esptool_tmp' -Force"
-    if exist "%~dp0esptool_tmp\\esptool-win64\\esptool.exe" (
-        copy /y "%~dp0esptool_tmp\\esptool-win64\\esptool.exe" "%~dp0esptool.exe" >nul
-    ) else (
-        for /r "%~dp0esptool_tmp" %%F in (esptool.exe) do copy /y "%%F" "%~dp0esptool.exe" >nul
-    )
-    rd /s /q "%~dp0esptool_tmp" >nul 2>&1
-    del /f /q "%~dp0esptool.zip" >nul 2>&1
-)
-
-if not exist "%~dp0esptool.exe" (
-    echo [ERROR] Failed to auto-download esptool.exe!
-    echo Please download esptool.exe manually from https://github.com/espressif/esptool/releases
-    echo and place it into this directory.
-    echo.
-    pause
-    exit /b 1
-)
-
-:ESPTOOL_OK
-echo [OK] esptool.exe is ready.
-echo.
-
-:: 2. Detect firmware binaries
 set "FLASH_CMD="
 
 if exist "%~dp0StairsEsp.ino.bootloader.bin" if exist "%~dp0StairsEsp.ino.partitions.bin" if exist "%~dp0StairsEsp.ino.bin" (
-    echo [INFO] Arduino CLI package detected (StairsEsp.ino.*)
+    echo [INFO] Найден полный комплект Arduino CLI (Bootloader + Partitions + App)
     set FLASH_CMD=0x1000 "%~dp0StairsEsp.ino.bootloader.bin" 0x8000 "%~dp0StairsEsp.ino.partitions.bin" 0x10000 "%~dp0StairsEsp.ino.bin"
-    goto BIN_FOUND
+    goto EXECUTE_FLASH
 )
 
 if exist "%~dp0bootloader.bin" if exist "%~dp0partitions.bin" if exist "%~dp0firmware.bin" (
-    echo [INFO] Full package detected (bootloader + partitions + firmware)
+    echo [INFO] Найден полный комплект сборки (Bootloader + Partitions + Firmware)
     set FLASH_CMD=0x1000 "%~dp0bootloader.bin" 0x8000 "%~dp0partitions.bin" 0x10000 "%~dp0firmware.bin"
-    goto BIN_FOUND
+    goto EXECUTE_FLASH
 )
 
 if exist "%~dp0firmware.bin" (
-    echo [INFO] Standard firmware.bin detected (flashing at offset 0x10000)
+    echo [INFO] Найден файл: firmware.bin (запись по адресу 0x10000)
     set FLASH_CMD=0x10000 "%~dp0firmware.bin"
-    goto BIN_FOUND
+    goto EXECUTE_FLASH
 )
 
 if exist "%~dp0StairsEsp.ino.bin" (
-    echo [INFO] StairsEsp.ino.bin detected (flashing at offset 0x10000)
+    echo [INFO] Найден файл: StairsEsp.ino.bin (запись по адресу 0x10000)
     set FLASH_CMD=0x10000 "%~dp0StairsEsp.ino.bin"
-    goto BIN_FOUND
+    goto EXECUTE_FLASH
 )
 
 for %%F in ("%~dp0stairs_*.bin") do (
-    echo [INFO] Versioned binary detected: %%~nxF
+    echo [INFO] Найден файл с версией: %%~nxF (запись по адресу 0x10000)
     set FLASH_CMD=0x10000 "%%~fF"
-    goto BIN_FOUND
+    goto EXECUTE_FLASH
 )
 
-echo [ERROR] Firmware .bin files not found in %~dp0!
-echo Please compile or download firmware binaries into this folder first.
+echo [!] Локальные .bin файлы прошивки не найдены в папке скрипта!
+echo Хотите выбрать файл вручную или скачать с GitHub?
+echo.
+echo   [1] Выбрать локальный файл с диска
+echo   [2] Скачать с GitHub Releases
+echo   [3] Вернуться в главное меню
+echo.
+set "FB_CHOICE="
+set /p FB_CHOICE="Ваш выбор (1-3): "
+if "%FB_CHOICE%"=="1" goto FLASH_LOCAL_MANUAL
+if "%FB_CHOICE%"=="2" goto GITHUB_RELEASE_PICKER
+goto MAIN_MENU
+
+:: ======================================================================
+:: 2. Choose local .bin file manually or via Drag-and-Drop
+:: ======================================================================
+:FLASH_LOCAL_MANUAL
+cls
+echo ======================================================================
+echo  📁 [Режим 2] Выбор локального файла прошивки на компьютере
+echo ======================================================================
+echo.
+
+call :ENSURE_ESPTOOL
+
+echo Найденные .bin файлы в текущей папке:
+echo ----------------------------------------------------
+set /a BIN_COUNT=0
+for %%F in ("%~dp0*.bin") do (
+    set /a BIN_COUNT+=1
+    echo   [!BIN_COUNT!] %%~nxF
+)
+echo ----------------------------------------------------
+echo.
+echo Укажите номер файла из списка выше, ИЛИ:
+echo Перетащите мышкой (Drag and Drop) любой .bin файл в это окно и нажмите ENTER.
+echo.
+set "CUSTOM_BIN="
+set /p CUSTOM_BIN="Путь к файлу или номер: "
+
+if "%CUSTOM_BIN%"=="" (
+    echo [!] Файл не выбран. Возврат в меню...
+    timeout /t 2 >nul
+    goto MAIN_MENU
+)
+
+:: Remove surrounding quotes if user drag-and-dropped
+set CUSTOM_BIN=%CUSTOM_BIN:"=%
+
+:: Check if user typed a number from the list
+set /a USER_NUM=%CUSTOM_BIN% 2>nul
+if %USER_NUM% GTR 0 (
+    set /a CURRENT_INDEX=0
+    for %%F in ("%~dp0*.bin") do (
+        set /a CURRENT_INDEX+=1
+        if !CURRENT_INDEX! EQU %USER_NUM% set "CUSTOM_BIN=%%~fF"
+    )
+)
+
+if not exist "%CUSTOM_BIN%" (
+    echo [ERROR] Указанный файл не найден: "%CUSTOM_BIN%"
+    echo Проверьте путь и попробуйте снова.
+    pause
+    goto FLASH_LOCAL_MANUAL
+)
+
+echo.
+echo [OK] Выбран файл: "%CUSTOM_BIN%"
+echo.
+echo Выберите адрес смещения Flash памяти:
+echo   [1] 0x10000 (Стандартное приложение / App Partition - РЕКОМЕНДУЕТСЯ)
+echo   [2] 0x0     (Полный образ / Full Binary Image)
+echo.
+set "OFFSET_CHOICE="
+set /p OFFSET_CHOICE="Адрес (1 или 2) [По умолчанию 1]: "
+if "%OFFSET_CHOICE%"=="2" (
+    set FLASH_CMD=0x0 "%CUSTOM_BIN%"
+) else (
+    set FLASH_CMD=0x10000 "%CUSTOM_BIN%"
+)
+goto EXECUTE_FLASH
+
+:: ======================================================================
+:: 3. Interactive GitHub Releases Version Picker & Downloader
+:: ======================================================================
+:GITHUB_RELEASE_PICKER
+cls
+echo ======================================================================
+echo  🌐 [Режим 3] Выбор и загрузка прошивки из GitHub Releases
+echo ======================================================================
+echo.
+echo Репозиторий: ${config.githubUsername || 'USER'}/${config.githubRepo || 'REPO'}
+echo.
+echo Доступные версии:
+echo.
+echo   [1] 🌟 v1.0.4 (Последний релиз: эффекты розжига, расчет Борисов, фиксы)
+echo   [2] 📦 v1.0.3 (Стабильная сборка PlatformIO)
+echo   [3] 📦 v1.0.2 (Астрономический расчет заката/рассвета)
+echo   [4] 📦 v1.0.0 (Базовая версия)
+echo   [L] 🚀 Скачать LATEST (самый свежий релиз напрямую с GitHub)
+echo   [C] ✍️  Ввести свой тег версии вручную (например v1.0.5)
+echo   [M] 🔙 Главное меню
+echo.
+set "GH_VER_CHOICE="
+set /p GH_VER_CHOICE="Выберите версию (1, 2, 3, 4, L, C, M) [По умолчанию 1]: "
+if "%GH_VER_CHOICE%"=="" set GH_VER_CHOICE=1
+
+if /i "%GH_VER_CHOICE%"=="M" goto MAIN_MENU
+if /i "%GH_VER_CHOICE%"=="L" goto DOWNLOAD_LATEST_GITHUB
+if /i "%GH_VER_CHOICE%"=="C" goto CUSTOM_TAG_INPUT
+
+set "TARGET_TAG=v1.0.4"
+if "%GH_VER_CHOICE%"=="1" set "TARGET_TAG=v1.0.4"
+if "%GH_VER_CHOICE%"=="2" set "TARGET_TAG=v1.0.3"
+if "%GH_VER_CHOICE%"=="3" set "TARGET_TAG=v1.0.2"
+if "%GH_VER_CHOICE%"=="4" set "TARGET_TAG=v1.0.0"
+
+goto DOWNLOAD_AND_FLASH_TAG
+
+:CUSTOM_TAG_INPUT
+echo.
+set "TARGET_TAG="
+set /p TARGET_TAG="Введите тег релиза (например v1.0.5): "
+if "%TARGET_TAG%"=="" goto GITHUB_RELEASE_PICKER
+goto DOWNLOAD_AND_FLASH_TAG
+
+:DOWNLOAD_LATEST_GITHUB
+echo.
+echo [*] Запрос информации о последнем релизе с GitHub...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+    "$user = '${config.githubUsername || 'USER'}';" ^
+    "$repo = '${config.githubRepo || 'REPO'}';" ^
+    "$url = \"https://github.com/$user/$repo/releases/latest/download/firmware.bin\";" ^
+    "$outFile = '%~dp0downloaded_latest_firmware.bin';" ^
+    "Write-Host \"[*] Скачивание последнего firmware.bin...\";" ^
+    "try {" ^
+    "  (New-Object System.Net.WebClient).DownloadFile($url, $outFile);" ^
+    "  Write-Host '[OK] Файл успешно скачан!';" ^
+    "  [System.IO.File]::WriteAllText('%temp%\\gh_dl_res.txt', 'SUCCESS');" ^
+    "} catch {" ^
+    "  Write-Host ('[!] Ошибка скачивания: ' + $_.Exception.Message);" ^
+    "  [System.IO.File]::WriteAllText('%temp%\\gh_dl_res.txt', 'FAIL');" ^
+    "}"
+
+set /p DL_RES=<"%temp%\\gh_dl_res.txt"
+del /f /q "%temp%\\gh_dl_res.txt" >nul 2>&1
+
+if "%DL_RES%"=="SUCCESS" (
+    set FLASH_CMD=0x10000 "%~dp0downloaded_latest_firmware.bin"
+    goto EXECUTE_FLASH
+) else (
+    echo.
+    echo [ERROR] Не удалось скачать latest релиз с GitHub.
+    echo Проверьте интернет-соединение и доступность репозитория.
+    pause
+    goto GITHUB_RELEASE_PICKER
+)
+
+:DOWNLOAD_AND_FLASH_TAG
+echo.
+echo [*] Скачивание прошивки версии %TARGET_TAG% с GitHub...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+    "$user = '${config.githubUsername || 'USER'}';" ^
+    "$repo = '${config.githubRepo || 'REPO'}';" ^
+    "$tag = '%TARGET_TAG%';" ^
+    "$url = \"https://github.com/$user/$repo/releases/download/$tag/firmware.bin\";" ^
+    "$outFile = \"%~dp0downloaded_$tag.bin\";" ^
+    "Write-Host \"[*] URL: $url\";" ^
+    "try {" ^
+    "  (New-Object System.Net.WebClient).DownloadFile($url, $outFile);" ^
+    "  Write-Host '[OK] Прошивка $tag успешно скачана!';" ^
+    "  [System.IO.File]::WriteAllText('%temp%\\gh_dl_res.txt', 'SUCCESS');" ^
+    "} catch {" ^
+    "  Write-Host ('[!] Ошибка скачивания: ' + $_.Exception.Message);" ^
+    "  [System.IO.File]::WriteAllText('%temp%\\gh_dl_res.txt', 'FAIL');" ^
+    "}"
+
+set /p DL_RES=<"%temp%\\gh_dl_res.txt"
+del /f /q "%temp%\\gh_dl_res.txt" >nul 2>&1
+
+if "%DL_RES%"=="SUCCESS" (
+    set FLASH_CMD=0x10000 "%~dp0downloaded_%TARGET_TAG%.bin"
+    goto EXECUTE_FLASH
+) else (
+    echo.
+    echo [ERROR] Не удалось скачать релиз %TARGET_TAG% с GitHub.
+    pause
+    goto GITHUB_RELEASE_PICKER
+)
+
+:: ======================================================================
+:: 4. Wireless OTA update over Wi-Fi
+:: ======================================================================
+:OTA_WIFI_UPDATE
+cls
+echo ======================================================================
+echo  📶 [Режим 4] Беспроводное OTA-обновление прошивки по Wi-Fi
+echo ======================================================================
+echo.
+echo Данный режим позволяет обновить ESP32 по локальной сети без USB-кабеля.
+echo.
+set "ESP_IP="
+set /p ESP_IP="Введите IP адрес ESP32 в локальной сети [192.168.4.1]: "
+if "%ESP_IP%"=="" set ESP_IP=192.168.4.1
+
+echo.
+echo Выберите файл прошивки для отправки:
+set "OTA_BIN="
+if exist "%~dp0firmware.bin" set "OTA_BIN=%~dp0firmware.bin"
+if exist "%~dp0StairsEsp.ino.bin" set "OTA_BIN=%~dp0StairsEsp.ino.bin"
+
+if not "%OTA_BIN%"=="" (
+    echo Найден файл по умолчанию: %OTA_BIN%
+    set /p USE_DEF="Использовать его? (Y/N) [Y]: "
+    if /i "%USE_DEF%"=="N" set "OTA_BIN="
+)
+
+if "%OTA_BIN%"=="" (
+    set /p OTA_BIN="Введите путь к .bin файлу или перетащите файл мышкой: "
+)
+set OTA_BIN=%OTA_BIN:"=%
+
+if not exist "%OTA_BIN%" (
+    echo [ERROR] Файл прошивки не найден!
+    pause
+    goto MAIN_MENU
+)
+
+echo.
+echo [*] Отправка прошивки на http://%ESP_IP%/update ...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "try {" ^
+    "  $url = 'http://%ESP_IP%/update';" ^
+    "  $file = '%OTA_BIN%';" ^
+    "  Write-Host '[*] Загрузка файла ' $file ' на ' $url '...';" ^
+    "  $wc = New-Object System.Net.WebClient;" ^
+    "  $bytes = [System.IO.File]::ReadAllBytes($file);" ^
+    "  $resp = $wc.UploadData($url, 'POST', $bytes);" ^
+    "  Write-Host '✅ [УСПЕХ] Прошивка успешно передана! ESP32 перезагружается...';" ^
+    "} catch {" ^
+    "  Write-Host ('❌ [ОШИБКА] Не удалось обновить по Wi-Fi: ' + $_.Exception.Message);" ^
+    "}"
+
 echo.
 pause
-exit /b 1
+goto MAIN_MENU
 
-:BIN_FOUND
+:: ======================================================================
+:: Flash Execution Engine via esptool.exe
+:: ======================================================================
+:EXECUTE_FLASH
+call :ENSURE_ESPTOOL
+
 echo.
 echo ======================================================
 echo  1. Подключите ESP32 к компьютеру через USB-кабель.
 echo  2. Если плата не шьется автоматически, зажмите кнопку
-echo     BOOT (IO0), нажмите RESET, отпустите BOOT.
+echo     BOOT (IO0), нажмите RESET, затем отпустите BOOT.
 echo ======================================================
 echo.
-echo Нажмите ЛЮБУЮ КЛАВИШУ для начала прошивки...
+echo Нажмите ЛЮБУЮ КЛАВИШУ для запуска прошивки...
 pause >nul
 
 echo.
 echo [*] Прошивка ESP32 через esptool (921600 baud)...
 "%~dp0esptool.exe" --chip esp32 --baud 921600 write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_CMD%
+
+if errorlevel 1 (
+    echo.
+    echo [*] Повторная попытка на безопасной скорости 115200 baud...
+    "%~dp0esptool.exe" --chip esp32 --baud 115200 write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_CMD%
+)
 
 if errorlevel 1 (
     echo.
@@ -145,7 +406,7 @@ if errorlevel 1 (
     echo ======================================================
     echo.
     pause
-    exit /b 1
+    goto MAIN_MENU
 )
 
 echo.
@@ -156,27 +417,61 @@ echo.
 
 :: 3. Post-Flash Setup Wizard Menu
 :POST_FLASH_MENU
-echo Выберите способ настройки параметров (Wi-Fi, ступени, скорость, яркость):
+echo Выберите следующее действие:
 echo.
 echo   [1] ⚙️  Быстрая настройка через USB прямо сейчас (Консольный мастер)
 echo   [2] 🌐  Открыть Web-интерфейс в браузере (Wi-Fi Точка Доступа 192.168.4.1)
 echo   [3] 📟  Открыть Монитор Serial Порта (Live Логи 115200)
-echo   [4] 🚪  Выход (ESP32 продолжит работу со стандартными настройками)
+echo   [4] 🔙  Главное меню прошивальщика
+echo   [5] 🚪  Выход
 echo.
-set "CHOICE="
-set /p CHOICE="Введите номер пункта (1, 2, 3 или 4) [По умолчанию 1]: "
-if "%CHOICE%"=="" set CHOICE=1
+set "POST_CHOICE="
+set /p POST_CHOICE="Введите номер пункта (1-5) [По умолчанию 1]: "
+if "%POST_CHOICE%"=="" set POST_CHOICE=1
 
-if "%CHOICE%"=="1" goto USB_SETUP_WIZARD
-if "%CHOICE%"=="2" goto BROWSER_AP_GUIDE
-if "%CHOICE%"=="3" goto OPEN_SERIAL_TERMINAL
-if "%CHOICE%"=="4" goto EXIT_SCRIPT
+if "%POST_CHOICE%"=="1" goto USB_SETUP_WIZARD
+if "%POST_CHOICE%"=="2" goto BROWSER_AP_GUIDE
+if "%POST_CHOICE%"=="3" goto OPEN_SERIAL_TERMINAL
+if "%POST_CHOICE%"=="4" goto MAIN_MENU
+if "%POST_CHOICE%"=="5" goto EXIT_SCRIPT
 
-echo [!] Неверный выбор, попробуйте еще раз.
+echo [!] Неверный выбор.
 goto POST_FLASH_MENU
 
 :: -------------------------------------------------------------
-:: Mode 1: USB Configuration Wizard (Sends commands over COM port)
+:: Helper: Ensure esptool.exe is downloaded and available
+:: -------------------------------------------------------------
+:ENSURE_ESPTOOL
+if exist "%~dp0esptool.exe" exit /b 0
+
+echo [*] esptool.exe не найден в папке.
+echo [*] Загрузка официального esptool.exe для Windows с GitHub...
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip', '%~dp0esptool.zip')"
+
+if exist "%~dp0esptool.zip" (
+    echo [*] Распаковка esptool.exe...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%~dp0esptool.zip' -DestinationPath '%~dp0esptool_tmp' -Force"
+    if exist "%~dp0esptool_tmp\\esptool-win64\\esptool.exe" (
+        copy /y "%~dp0esptool_tmp\\esptool-win64\\esptool.exe" "%~dp0esptool.exe" >nul
+    ) else (
+        for /r "%~dp0esptool_tmp" %%F in (esptool.exe) do copy /y "%%F" "%~dp0esptool.exe" >nul
+    )
+    rd /s /q "%~dp0esptool_tmp" >nul 2>&1
+    del /f /q "%~dp0esptool.zip" >nul 2>&1
+)
+
+if not exist "%~dp0esptool.exe" (
+    echo [ERROR] Не удалось автоматически скачать esptool.exe!
+    echo Скачайте esptool.exe вручную с https://github.com/espressif/esptool/releases
+    pause
+    exit /b 1
+)
+echo [OK] esptool.exe готов к работе.
+exit /b 0
+
+:: -------------------------------------------------------------
+:: Mode 5: USB Configuration Wizard (Sends commands over COM port)
 :: -------------------------------------------------------------
 :USB_SETUP_WIZARD
 echo.
@@ -184,7 +479,7 @@ echo ======================================================================
 echo  ⚙️  Мастер быстрой настройки параметров через USB
 echo ======================================================================
 echo.
-echo Введите параметры вашей системы (или нажмите ENTER, чтобы пропустить):
+echo Введите параметры вашей системы (или нажмите ENTER, чтобы оставить по умолчанию):
 echo.
 
 set "CFG_WIFI_SSID="
@@ -276,7 +571,7 @@ echo.
 if "%CFG_RESULT%"=="SUCCESS" (
     echo ======================================================================
     echo  🎉 [ГОТОВО] Все настройки успешно переданы и сохранены в ESP32!
-    echo  Контроллер перезагрузился с вашими новыми параметрами!
+    echo  Контроллер перезагрузился с новыми параметрами!
     echo ======================================================================
 ) else (
     echo [!] Предупреждение при записи: %CFG_RESULT%
@@ -290,7 +585,7 @@ if /i "%OPEN_MON%"=="N" goto POST_FLASH_MENU
 goto OPEN_SERIAL_TERMINAL
 
 :: -------------------------------------------------------------
-:: Mode 2: Web Access Point Guide
+:: Mode: Web Access Point Guide
 :: -------------------------------------------------------------
 :BROWSER_AP_GUIDE
 echo.
@@ -305,12 +600,6 @@ echo       🔑 Пароль:     12345678
 echo.
 echo 3. Откройте в браузере адрес:
 echo       🌐 http://192.168.4.1
-echo.
-echo В открывшемся Web-интерфейсе вы сможете:
-echo  - Настроить Wi-Fi с автоматическим сканером сетей
-echo  - Указать количество ступеней и диодов
-echo  - Настроить скорость, задержку, яркость и цвет палитрой
-echo  - Запустить ручной тест движения вверх/вниз
 echo ======================================================================
 echo.
 start http://192.168.4.1 >nul 2>&1
@@ -318,7 +607,7 @@ pause
 goto POST_FLASH_MENU
 
 :: -------------------------------------------------------------
-:: Mode 3: Open Serial Terminal
+:: Mode: Open Serial Terminal
 :: -------------------------------------------------------------
 :OPEN_SERIAL_TERMINAL
 if exist "%~dp0terminal.bat" (
@@ -339,7 +628,6 @@ goto POST_FLASH_MENU
 :EXIT_SCRIPT
 echo.
 echo Контроллер умной лестницы готов к работе!
-echo Спасибо за использование!
 echo.
 exit /b 0
 `;
@@ -796,6 +1084,16 @@ void loop() {
 
 // Standby Mode: 0 = Off, 1 = First & Last Step Only, 2 = All Steps Dim, 3 = Soft Breathing
 #define STANDBY_MODE_TYPE  ${config.standbyMode === 'off' ? 0 : config.standbyMode === 'edge_steps' ? 1 : config.standbyMode === 'all_dim' ? 2 : 3}
+
+// Visual Lighting Effect: 0=Wave, 1=Smooth Fade, 2=Curtain Fill, 3=Center Spread, 4=Meteor Chase, 5=Firefly Sparkle, 6=Rainbow Flow
+#define LIGHTING_EFFECT_MODE ${
+  config.effectMode === 'smooth_fade_all' ? 1 :
+  config.effectMode === 'curtain_fill' ? 2 :
+  config.effectMode === 'center_spread' ? 3 :
+  config.effectMode === 'meteor_chase' ? 4 :
+  config.effectMode === 'firefly_sparkle' ? 5 :
+  config.effectMode === 'rainbow_flow' ? 6 : 0
+}
 
 // ================= SOLAR & GEOLOCATION =================
 #define DEFAULT_LATITUDE   ${config.latitude}f    // Latitude for Sunset/Sunrise calculation
@@ -1397,53 +1695,251 @@ private:
     static String getIndexHtml() {
         return R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ESP32 Smart Staircase Controller</title>
+    <title>Умная Лестница ESP32</title>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; display: flex; justify-content: center; }
-        .card { background: #1e293b; padding: 24px; border-radius: 16px; width: 100%; max-width: 480px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        h1 { margin-top: 0; font-size: 22px; color: #fbbf24; }
-        .btn { background: #3b82f6; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer; width: 100%; margin-top: 10px; font-weight: bold; }
-        .btn-amber { background: #f59e0b; }
-        .btn:hover { opacity: 0.9; }
-        .row { display: flex; gap: 10px; margin-top: 10px; }
-        .stat { background: #0f172a; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 12px; display: flex; justify-content: center; }
+        .card { background: #1e293b; padding: 20px; border-radius: 16px; width: 100%; max-width: 500px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); border: 1px solid #334155; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        h1 { margin: 0; font-size: 20px; color: #fbbf24; }
+        .badge { background: #0284c7; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .stat { background: #0f172a; padding: 10px; border-radius: 8px; font-size: 12px; border: 1px solid #1e293b; }
         .stat span { color: #38bdf8; font-weight: bold; }
+        .tabs { display: flex; gap: 4px; background: #0f172a; padding: 4px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 16px; overflow-x: auto; }
+        .tab-btn { flex: 1; background: transparent; border: none; color: #94a3b8; padding: 8px 6px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+        .tab-btn.active { background: #2563eb; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        h2 { font-size: 14px; color: #38bdf8; margin: 14px 0 8px 0; border-bottom: 1px solid #334155; padding-bottom: 4px; }
+        .btn { background: #2563eb; color: white; border: none; padding: 10px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.2s; }
+        .btn:hover { opacity: 0.9; }
+        .btn-amber { background: #d97706; }
+        .btn-green { background: #16a34a; }
+        .btn-purple { background: #7c3aed; }
+        .row { display: flex; gap: 8px; margin-top: 8px; }
+        label { display: block; font-size: 12px; color: #94a3b8; margin-top: 10px; margin-bottom: 4px; }
+        input, select { width: 100%; background: #0f172a; border: 1px solid #334155; color: white; padding: 8px; border-radius: 6px; font-size: 13px; }
+        .guide-box { background: #1e1b4b; border: 1px solid #4338ca; border-radius: 10px; padding: 12px; font-size: 12px; color: #e0e7ff; margin-bottom: 14px; }
+        .guide-box strong { color: #facc15; }
+        code { background: #312e81; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 11px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>🌟 Smart Staircase Controller</h1>
-        <div class="stat">Version: <span>)rawliteral" + String(FIRMWARE_VERSION) + R"rawliteral(</span></div>
-        <div class="stat">Steps: <span>)rawliteral" + String(NUM_STEPS) + R"rawliteral( ()rawliteral" + String(TOTAL_LEDS) + R"rawliteral( LEDs)</span></div>
-        
-        <div class="row">
-            <button class="btn" onclick="fetch('/api/trigger', {method:'POST', body:new URLSearchParams({dir:'up'})})">🚶 Trigger UP</button>
-            <button class="btn btn-amber" onclick="fetch('/api/trigger', {method:'POST', body:new URLSearchParams({dir:'down'})})">🚶 Trigger DOWN</button>
+        <div class="header">
+            <h1>🌟 Умная Лестница ESP32</h1>
+            <span class="badge">v)rawliteral" + String(FIRMWARE_VERSION) + R"rawliteral(</span>
         </div>
 
-        <div style="margin-top: 20px;">
-            <label>Color Picker:</label><br>
-            <input type="color" id="colorPicker" value="#ffb450" style="width:100%; height:45px; border:none; border-radius:8px; cursor:pointer;" onchange="updateColor(this.value)">
+        <div class="grid2">
+            <div class="stat">Ступеней / LED:<br><span id="dispSteps">)rawliteral" + String(NUM_STEPS) + R"rawliteral( / )rawliteral" + String(TOTAL_LEDS) + R"rawliteral( шт</span></div>
+            <div class="stat">IP адрес:<br><span id="dispIp">192.168.4.1</span></div>
+            <div class="stat">Статус сети:<br><span id="dispWifi">Подключение...</span></div>
+            <div class="stat">Время / Режим:<br><span id="dispTime">--:-- (🌙 Ночь)</span></div>
         </div>
 
-        <div style="margin-top: 25px; text-align: center;">
-            <a href="/update" style="color: #94a3b8; font-size: 13px;">Manual OTA Firmware Flash (.bin)</a>
+        <div class="tabs">
+            <button class="tab-btn active" onclick="openTab('tab-control')">🎮 Управление</button>
+            <button class="tab-btn" onclick="openTab('tab-stairs')">🪜 Лестница</button>
+            <button class="tab-btn" onclick="openTab('tab-wifi')">📶 Wi-Fi</button>
+            <button class="tab-btn" onclick="openTab('tab-solar')">☀️ Солнце</button>
+            <button class="tab-btn" onclick="openTab('tab-ota')">⚡ Прошивка (OTA)</button>
+        </div>
+
+        <!-- TAB 1: CONTROL -->
+        <div id="tab-control" class="tab-content active">
+            <h2>🚶 Ручной запуск подсветки</h2>
+            <div class="row">
+                <button class="btn" onclick="triggerStairs('up')">⬆️ Снизу Вверх</button>
+                <button class="btn btn-amber" onclick="triggerStairs('down')">⬇️ Сверху Вниз</button>
+            </div>
+
+            <h2>🎨 Цвет подсветки (WS2812B)</h2>
+            <input type="color" id="colorPicker" value="#ffb450" onchange="saveColor(this.value)" style="height:44px; cursor:pointer;">
+
+            <button onclick="saveSettings(false)" class="btn btn-green" style="margin-top:16px;">💾 Применить параметры</button>
+        </div>
+
+        <!-- TAB 2: STAIRS -->
+        <div id="tab-stairs" class="tab-content">
+            <h2>🪜 Параметры ступеней</h2>
+            <div class="grid2">
+                <div>
+                    <label>Кол-во ступеней:</label>
+                    <input type="number" id="inpNumSteps" value=")rawliteral" + String(NUM_STEPS) + R"rawliteral(" min="1" max="32">
+                </div>
+                <div>
+                    <label>LED на ступень:</label>
+                    <input type="number" id="inpLedsStep" value=")rawliteral" + String(LEDS_PER_STEP) + R"rawliteral(" min="1" max="60">
+                </div>
+            </div>
+
+            <h2>⏱️ Скорость и Тайминги</h2>
+            <label>Скорость переключения ступени (20-250 мс):</label>
+            <input type="number" id="inpSpeed" value=")rawliteral" + String(config.stepSpeedMs || 90) + R"rawliteral(" min="20" max="250">
+
+            <label>Время свечения после прохода (3-60 сек):</label>
+            <input type="number" id="inpHold" value=")rawliteral" + String(config.holdTimeSec || 8) + R"rawliteral(" min="3" max="60">
+
+            <label>Основная яркость подсветки (10-255):</label>
+            <input type="number" id="inpActBri" value=")rawliteral" + String(config.activeBrightness || 220) + R"rawliteral(" min="10" max="255">
+
+            <h2>🌙 Ночной дежурный режим (Standby)</h2>
+            <label>Тип дежурной подсветки:</label>
+            <select id="selSbMode">
+                <option value="0">0 — Выключен</option>
+                <option value="1" selected>1 — Первая и последняя ступени</option>
+                <option value="2">2 — Все ступени мягко светятся</option>
+                <option value="3">3 — Плавное дыхание</option>
+            </select>
+
+            <label>Яркость дежурного режима (5-100):</label>
+            <input type="number" id="inpSbBri" value=")rawliteral" + String(config.standbyBrightness || 25) + R"rawliteral(" min="5" max="100">
+
+            <button onclick="saveSettings(false)" class="btn btn-green" style="margin-top:16px;">💾 Сохранить параметры ступеней</button>
+        </div>
+
+        <!-- TAB 3: WIFI -->
+        <div id="tab-wifi" class="tab-content">
+            <h2>📶 Настройка Wi-Fi сети</h2>
+            <label>Имя сети (SSID):</label>
+            <div class="row">
+                <input type="text" id="wifiSsid" placeholder="Имя вашей сети">
+                <button type="button" onclick="scanWifi()" class="btn" style="width:auto; padding:8px 12px;">🔍 Поиск</button>
+            </div>
+            <select id="wifiList" style="display:none; margin-top:6px;" onchange="if(this.value) document.getElementById('wifiSsid').value=this.value;"></select>
+
+            <label>Пароль от Wi-Fi:</label>
+            <input type="password" id="wifiPass" placeholder="Пароль">
+
+            <button onclick="saveSettings(true)" class="btn btn-green" style="margin-top:16px;">💾 Сохранить и Перезагрузить ESP32</button>
+        </div>
+
+        <!-- TAB 4: SOLAR -->
+        <div id="tab-solar" class="tab-content">
+            <h2>☀️ Астрономический расчет заката</h2>
+            <div class="guide-box">
+                <strong>📍 Локация:</strong> г. Борисов, Минская обл., Беларусь<br>
+                <strong>Координаты:</strong> 54.2276° N, 28.5052° E (UTC+3)<br>
+                <strong>Включение:</strong> за 30 мин до захода солнца<br>
+                <strong>Выключение:</strong> на рассвете<br>
+                <strong>Сервер времени:</strong> pool.ntp.org (NTP)
+            </div>
+            <div class="stat" id="dispSolarMode">Статус: Расчет времени по солнцу активен</div>
+        </div>
+
+        <!-- TAB 5: OTA & FLASHING GUIDE -->
+        <div id="tab-ota" class="tab-content">
+            <div class="guide-box">
+                <strong>❓ КАКОЙ ФАЙЛ ВЫБИРАТЬ ДЛЯ ПРОШИВКИ?</strong>
+                <p style="margin:6px 0 0 0; line-height: 1.5;">
+                    • <strong>Для этой Web-страницы (OTA):</strong> выберите <code>firmware.bin</code> (или <code>StairsEsp.ino.bin</code>).<br>
+                    • <strong>Для прошивки по USB (flash_windows.bat):</strong> используйте <code>firmware.bin</code> со смещением <code>0x10000</code>.<br>
+                    • <strong>Для чистой платы с нуля:</strong> 3 файла (<code>bootloader.bin</code> 0x1000, <code>partitions.bin</code> 0x8000, <code>firmware.bin</code> 0x10000).
+                </p>
+            </div>
+
+            <h2>⚡ Загрузка локального файла (.bin)</h2>
+            <form method="POST" action="/update" enctype="multipart/form-data" style="margin-bottom:16px;">
+                <input type="file" name="update" accept=".bin" required style="margin-bottom:8px;">
+                <button type="submit" class="btn btn-purple">🚀 Загрузить и прошить по Wi-Fi</button>
+            </form>
+
+            <h2>🔄 Перезагрузка контроллера</h2>
+            <button onclick="restartEsp()" class="btn" style="background:#ef4444;">🔄 Перезагрузить ESP32</button>
+        </div>
+
+        <div style="margin-top: 18px; display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#94a3b8; border-top:1px solid #334155; padding-top:10px;">
+            <span>Умная Лестница ESP32</span>
+            <a href="/update" style="color: #38bdf8; text-decoration:none;">⚡ Прямая страница /update</a>
         </div>
     </div>
 
     <script>
-        function updateColor(hex) {
+        function openTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            const target = document.getElementById(tabId);
+            if (target) target.classList.add('active');
+            if (event && event.target) event.target.classList.add('active');
+        }
+
+        function updateStatus() {
+            fetch('/api/status').then(r => r.json()).then(d => {
+                document.getElementById('dispIp').innerText = d.ip || '192.168.4.1';
+                document.getElementById('dispWifi').innerText = d.wifi_connected ? '✅ Подключен' : '⚠️ AP Точка Доступа';
+                document.getElementById('dispTime').innerText = (d.time || '--:--') + ' (' + (d.is_night_active ? '🌙 Ночь' : '☀️ День') + ')';
+                if (d.steps) {
+                    document.getElementById('dispSteps').innerText = d.steps + ' / ' + (d.total_leds || d.steps*30) + ' шт';
+                }
+                const sm = document.getElementById('dispSolarMode');
+                if (sm) sm.innerText = d.is_night_active ? '🌙 Ночной режим АКТИВЕН (подсветка готова)' : '☀️ Дневной режим (подсветка ожидает заката)';
+            }).catch(()=>{});
+        }
+        setInterval(updateStatus, 3000);
+        updateStatus();
+
+        function triggerStairs(dir) {
+            fetch('/api/trigger', { method: 'POST', body: new URLSearchParams({ dir }) });
+        }
+
+        function saveColor(hex) {
             const r = parseInt(hex.substr(1,2), 16);
             const g = parseInt(hex.substr(3,2), 16);
             const b = parseInt(hex.substr(5,2), 16);
-            fetch('/api/color', {
-                method: 'POST',
-                body: new URLSearchParams({ r, g, b })
+            fetch('/api/color', { method: 'POST', body: new URLSearchParams({ r, g, b }) });
+        }
+
+        function scanWifi() {
+            const list = document.getElementById('wifiList');
+            list.style.display = 'block';
+            list.innerHTML = '<option>Сканирование сетей...</option>';
+            fetch('/api/scan_wifi').then(r => r.json()).then(data => {
+                if (data.networks && data.networks.length) {
+                    list.innerHTML = '<option value="">-- Выберите найденную сеть --</option>' + 
+                        data.networks.map(n => '<option value="' + n.ssid + '">' + n.ssid + ' (' + n.rssi + ' dBm)</option>').join('');
+                } else {
+                    list.innerHTML = '<option>Сети не найдены, попробуйте еще раз</option>';
+                }
             });
+        }
+
+        function saveSettings(reboot) {
+            const ssid = document.getElementById('wifiSsid').value;
+            const pass = document.getElementById('wifiPass').value;
+            const num_steps = document.getElementById('inpNumSteps').value;
+            const leds_step = document.getElementById('inpLedsStep').value;
+            const anim_speed = document.getElementById('inpSpeed').value;
+            const hold_time = document.getElementById('inpHold').value;
+            const act_bright = document.getElementById('inpActBri').value;
+            const sb_bright = document.getElementById('inpSbBri').value;
+            const sb_mode = document.getElementById('selSbMode').value;
+
+            const params = new URLSearchParams({
+                ssid, pass, num_steps, leds_step, anim_speed, hold_time, act_bright, sb_bright, sb_mode,
+                reboot: reboot ? '1' : '0'
+            });
+
+            fetch('/api/save_config', { method: 'POST', body: params })
+                .then(r => r.json())
+                .then(res => {
+                    if (reboot) {
+                        alert('✅ Настройки сохранены! ESP32 перезагружается для подключения к ' + ssid + '...');
+                    } else {
+                        alert('✅ Параметры подсветки успешно применены!');
+                    }
+                });
+        }
+
+        function restartEsp() {
+            if (confirm('Перезагрузить контроллер ESP32?')) {
+                fetch('/api/restart', { method: 'POST' }).then(() => alert('ESP32 перезагружается...'));
+            }
         }
     </script>
 </body>
@@ -1667,13 +2163,18 @@ void loop() {
 
 ---
 
-### Вариант 2: Прошивка по USB в 1 клик на Windows (flash_windows.bat)
-1. **Готовый архив из GitHub Releases:**
-   - Скачайте архив **\`esp32_stairs_flasher_vX.X.zip\`** из раздела **Releases** вашего репозитория.
+### Вариант 2: Прошивка и обновление на Windows (flash_windows.bat)
+1. **Запуск скрипта flash_windows.bat:**
    - Подключите ESP32 к компьютеру по USB и дважды кликните по **\`flash_windows.bat\`**.
-   - Скрипт прошьет плату. Для чтения логов в реальном времени запустите **\`terminal.bat\`**.
-2. **Из исходного архива проекта:**
-   - Скрипт **\`flash_windows.bat\`** автоматически скачает официальный \`esptool.exe\` из репозитория Espressif при первом запуске, если его нет в папке!
+   - Скрипт предоставит интерактивное меню:
+     - **[1] ⚡ Автопоиск и прошивка локальных файлов** (StairsEsp.ino.bin, firmware.bin).
+     - **[2] 📁 Выбор любого локального .bin файла** на компьютере (вручную или Drag-and-Drop).
+     - **[3] 🌐 Выбор и скачивание версий с GitHub Releases** (v1.0.4, v1.0.3, v1.0.2, latest или ввод тега).
+     - **[4] 📶 Беспроводное OTA-обновление по Wi-Fi** (отправка .bin прямо на IP платы).
+     - **[5] ⚙️ Консольный мастер настройки параметров** (Wi-Fi, ступени, LED, скорость, цвета).
+     - **[6] 📟 Serial Monitor** (115200 бод).
+2. **Автоматическая подготовка:**
+   - Скрипт **\`flash_windows.bat\`** автоматически скачивает официальный \`esptool.exe\` из репозитория Espressif при первом запуске, если его нет в папке!
 
 ---
 

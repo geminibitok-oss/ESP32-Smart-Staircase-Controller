@@ -1,14 +1,24 @@
+export type LightingEffectMode = 
+  | 'wave_cascade'       // Классическая плавная пошаговая волна
+  | 'smooth_fade_all'     // Одновременный плавный рассвет всех ступеней
+  | 'center_spread'       // Волна из центра к краям (или от краев к центру)
+  | 'curtain_fill'        // Заполнение диодов внутри ступени слева направо
+  | 'meteor_chase'        // Световой метеор/бегущий огонь по ступеням
+  | 'firefly_sparkle'     // Эффект светлячков/мерцания
+  | 'rainbow_flow';       // Плавный радужный перелив
+
 export interface StaircaseConfig {
-  // Physical configuration
+  // Physical configuration & Pin Assignment
   stepCount: number;
   ledsPerStep: number;
-  ledPin: number;
-  bottomSensorPin: number;
-  topSensorPin: number;
-  ldrSensorPin: number; // Optional LDR analog pin
+  ledPin: number;            // GPIO for WS2812B Data
+  bottomSensorPin: number;   // GPIO for Bottom Sensor
+  topSensorPin: number;      // GPIO for Top Sensor
+  ldrSensorPin: number;      // Optional LDR analog pin
   useLdr: boolean;
 
-  // Visual & Animation
+  // Visual & Animation Effects
+  effectMode: LightingEffectMode; // Режим анимации включения лестницы
   colorScheme: 'warm_white' | 'natural_white' | 'amber_gold' | 'neon_ice' | 'rainbow_gradient' | 'cyberpunk' | 'custom';
   customHexColor: string;
   stepSpeedMs: number; // speed of step propagation

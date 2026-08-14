@@ -40,6 +40,7 @@ public:
     uint8_t activeBrightness = ACTIVE_BRIGHTNESS;
     uint8_t standbyBrightness = STANDBY_BRIGHTNESS;
     uint8_t standbyModeType = STANDBY_MODE_TYPE;
+    uint8_t effectMode = 0; // 0=Wave Cascade, 1=Smooth Fade All, 2=Curtain Fill, 3=Center Spread, 4=Meteor Chase, 5=Firefly Sparkle, 6=Rainbow Flow
 
     void begin() {
         FastLED.addLeds<WS2812B, PIN_LED_DATA, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip);
@@ -102,20 +103,89 @@ public:
                 break;
 
             case STATE_ANIMATING_IN:
-                if (now - lastStepTime >= stepAnimSpeed) {
-                    lastStepTime = now;
-                    
-                    int stepToLight = (currentDirection == DIR_UP) 
-                        ? currentStepProgress 
-                        : (numSteps - 1 - currentStepProgress);
+                if (effectMode == 1) {
+                    // Smooth Fade All steps simultaneously
+                    if (now - lastStepTime >= (stepAnimSpeed / 4)) {
+                        lastStepTime = now;
+                        currentStepProgress += 10;
+                        uint8_t bri = (currentStepProgress > activeBrightness) ? activeBrightness : currentStepProgress;
+                        for (int s = 0; s < numSteps; s++) {
+                            lightUpStep(s, primaryColor, bri);
+                        }
+                        FastLED.show();
+                        if (currentStepProgress >= activeBrightness) {
+                            currentState = STATE_FULL_ACTIVE;
+                            motionHoldTimer = now;
+                        }
+                    }
+                } else if (effectMode == 3) {
+                    // Center Spread outward
+                    if (now - lastStepTime >= stepAnimSpeed) {
+                        lastStepTime = now;
+                        int mid = numSteps / 2;
+                        int s1 = mid - currentStepProgress;
+                        int s2 = mid + currentStepProgress;
+                        if (s1 >= 0 && s1 < numSteps) lightUpStep(s1, primaryColor, activeBrightness);
+                        if (s2 >= 0 && s2 < numSteps) lightUpStep(s2, primaryColor, activeBrightness);
+                        FastLED.show();
 
-                    lightUpStep(stepToLight, primaryColor, activeBrightness);
-                    FastLED.show();
+                        currentStepProgress++;
+                        if (currentStepProgress >= (numSteps / 2 + 1)) {
+                            currentState = STATE_FULL_ACTIVE;
+                            motionHoldTimer = now;
+                        }
+                    }
+                } else if (effectMode == 4) {
+                    // Meteor chase
+                    if (now - lastStepTime >= (stepAnimSpeed / 2)) {
+                        lastStepTime = now;
+                        int targetStep = (currentDirection == DIR_UP) ? currentStepProgress : (numSteps - 1 - currentStepProgress);
+                        
+                        // Fade existing
+                        fadeToBlackBy(leds, numSteps * ledsPerStep, 60);
+                        lightUpStep(targetStep, CRGB::White, activeBrightness);
+                        FastLED.show();
 
-                    currentStepProgress++;
-                    if (currentStepProgress >= numSteps) {
-                        currentState = STATE_FULL_ACTIVE;
-                        motionHoldTimer = now;
+                        currentStepProgress++;
+                        if (currentStepProgress >= numSteps) {
+                            for (int s = 0; s < numSteps; s++) lightUpStep(s, primaryColor, activeBrightness);
+                            FastLED.show();
+                            currentState = STATE_FULL_ACTIVE;
+                            motionHoldTimer = now;
+                        }
+                    }
+                } else if (effectMode == 6) {
+                    // Rainbow flow
+                    if (now - lastStepTime >= stepAnimSpeed) {
+                        lastStepTime = now;
+                        int stepToLight = (currentDirection == DIR_UP) ? currentStepProgress : (numSteps - 1 - currentStepProgress);
+                        uint8_t hue = (stepToLight * 255) / numSteps;
+                        lightUpStep(stepToLight, CHSV(hue, 220, activeBrightness), activeBrightness);
+                        FastLED.show();
+
+                        currentStepProgress++;
+                        if (currentStepProgress >= numSteps) {
+                            currentState = STATE_FULL_ACTIVE;
+                            motionHoldTimer = now;
+                        }
+                    }
+                } else {
+                    // Default: Wave cascade step by step
+                    if (now - lastStepTime >= stepAnimSpeed) {
+                        lastStepTime = now;
+                        
+                        int stepToLight = (currentDirection == DIR_UP) 
+                            ? currentStepProgress 
+                            : (numSteps - 1 - currentStepProgress);
+
+                        lightUpStep(stepToLight, primaryColor, activeBrightness);
+                        FastLED.show();
+
+                        currentStepProgress++;
+                        if (currentStepProgress >= numSteps) {
+                            currentState = STATE_FULL_ACTIVE;
+                            motionHoldTimer = now;
+                        }
                     }
                 }
                 break;

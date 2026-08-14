@@ -187,7 +187,7 @@ export const GitHubWorkflowGuide: React.FC<GitHubWorkflowGuideProps> = ({ config
                 <span className="text-sky-400">📄 firmware.bin / StairsEsp.ino.bin</span> — скомпилированная прошивка ESP32 для OTA
               </div>
               <div className="text-slate-300 flex items-center gap-2">
-                <span className="text-amber-400">📄 flash_windows.bat</span> — скрипт быстрой прошивки в 1 клик
+                <span className="text-amber-400">📄 flash_windows.bat</span> — универсальный скрипт: выбор локальных .bin (Drag & Drop), скачивание версий с GitHub Releases и OTA по Wi-Fi
               </div>
               <div className="text-slate-300 flex items-center gap-2">
                 <span className="text-amber-300">📄 terminal.bat</span> — консоль мониторинга Serial порта (115200 бод)

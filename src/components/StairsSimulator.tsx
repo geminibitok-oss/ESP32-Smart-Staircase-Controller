@@ -15,7 +15,11 @@ import {
   MapPin,
   Save,
   CheckCircle2,
-  Maximize2
+  Maximize2,
+  RefreshCw,
+  Download,
+  GitPullRequest,
+  ExternalLink
 } from 'lucide-react';
 import { StaircaseConfig, AnimationState, SolarTimeInfo } from '../types';
 import { calculateSolarTimes } from '../utils/solarCalculator';
@@ -27,8 +31,10 @@ interface StairsSimulatorProps {
 }
 
 export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpdateConfig }) => {
-  // Right panel view mode: 'esp_web' (Shows live ESP32 web interface), 'solar' (Solar & Location), 'testing' (Diagnostics & OTA)
-  const [rightViewMode, setRightViewMode] = useState<'esp_web' | 'solar' | 'testing'>('esp_web');
+  // Right panel view mode: 'esp_web' (Shows live ESP32 web interface), 'solar' (Solar & Location), 'github_ota' (GitHub Releases & OTA), 'testing' (Diagnostics)
+  const [rightViewMode, setRightViewMode] = useState<'esp_web' | 'github_ota' | 'solar' | 'testing'>('esp_web');
+  const [otaProgress, setOtaProgress] = useState<number>(0);
+  const [otaStatusText, setOtaStatusText] = useState<string | null>(null);
 
   // Simulator State
   const [animState, setAnimState] = useState<AnimationState>('IDLE_DAY');
@@ -144,15 +150,53 @@ export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpda
     let interval: NodeJS.Timeout;
 
     if (animState === 'UP_WAVE' || animState === 'DOWN_WAVE') {
-      interval = setInterval(() => {
-        setActiveStepProgress((prev) => {
-          if (prev + 1 >= config.stepCount) {
-            setAnimState('FULL_ON');
-            return config.stepCount;
-          }
-          return prev + 1;
-        });
-      }, Math.max(30, config.stepSpeedMs));
+      const effect = config.effectMode || 'wave_cascade';
+
+      if (effect === 'smooth_fade_all') {
+        // Fast fade-in all steps simultaneously
+        interval = setInterval(() => {
+          setActiveStepProgress((prev) => {
+            if (prev + 1 >= 10) {
+              setAnimState('FULL_ON');
+              return 10;
+            }
+            return prev + 1;
+          });
+        }, Math.max(20, config.stepSpeedMs / 2));
+      } else if (effect === 'curtain_fill') {
+        // Step propagation with internal LED fill
+        interval = setInterval(() => {
+          setActiveStepProgress((prev) => {
+            if (prev + 1 >= config.stepCount * 2) {
+              setAnimState('FULL_ON');
+              return config.stepCount * 2;
+            }
+            return prev + 1;
+          });
+        }, Math.max(15, config.stepSpeedMs / 2));
+      } else if (effect === 'center_spread') {
+        // From center outwards
+        interval = setInterval(() => {
+          setActiveStepProgress((prev) => {
+            if (prev + 1 >= Math.ceil(config.stepCount / 2)) {
+              setAnimState('FULL_ON');
+              return Math.ceil(config.stepCount / 2);
+            }
+            return prev + 1;
+          });
+        }, Math.max(30, config.stepSpeedMs));
+      } else {
+        // Standard cascade wave & other modes
+        interval = setInterval(() => {
+          setActiveStepProgress((prev) => {
+            if (prev + 1 >= config.stepCount) {
+              setAnimState('FULL_ON');
+              return config.stepCount;
+            }
+            return prev + 1;
+          });
+        }, Math.max(20, config.stepSpeedMs));
+      }
     } else if (animState === 'FULL_ON') {
       interval = setInterval(() => {
         setHoldTimerSec((prev) => {
@@ -214,6 +258,8 @@ export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpda
       };
     }
 
+    const effect = config.effectMode || 'wave_cascade';
+
     if (animState === 'FULL_ON') {
       return {
         isLit: true,
@@ -223,19 +269,66 @@ export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpda
       };
     }
 
-    if (animState === 'UP_WAVE') {
-      const isLit = stepIndex <= activeStepProgress;
-      return {
-        isLit,
-        color: activeColor,
-        brightness: isLit ? config.activeBrightness / 255 : 0.05,
-        glow: isLit ? `0 0 14px ${activeColor}` : 'none',
-      };
-    }
+    if (animState === 'UP_WAVE' || animState === 'DOWN_WAVE') {
+      if (effect === 'smooth_fade_all') {
+        const ratio = Math.min(1, activeStepProgress / 10);
+        return {
+          isLit: ratio > 0.05,
+          color: activeColor,
+          brightness: (config.activeBrightness / 255) * ratio,
+          glow: `0 0 ${Math.round(16 * ratio)}px ${activeColor}`,
+        };
+      }
 
-    if (animState === 'DOWN_WAVE') {
-      const topOffset = config.stepCount - 1 - stepIndex;
-      const isLit = topOffset <= activeStepProgress;
+      if (effect === 'center_spread') {
+        const mid = (config.stepCount - 1) / 2;
+        const distFromCenter = Math.abs(stepIndex - mid);
+        const isLit = distFromCenter <= activeStepProgress;
+        return {
+          isLit,
+          color: activeColor,
+          brightness: isLit ? config.activeBrightness / 255 : 0.05,
+          glow: isLit ? `0 0 14px ${activeColor}` : 'none',
+        };
+      }
+
+      if (effect === 'meteor_chase') {
+        const targetStep = animState === 'UP_WAVE' ? activeStepProgress : (config.stepCount - 1 - activeStepProgress);
+        const dist = Math.abs(stepIndex - targetStep);
+        if (dist === 0) {
+          return {
+            isLit: true,
+            color: '#ffffff',
+            brightness: 1.0,
+            glow: '0 0 20px #ffffff',
+          };
+        } else if (dist <= 2) {
+          return {
+            isLit: true,
+            color: activeColor,
+            brightness: (config.activeBrightness / 255) * (1 - dist * 0.35),
+            glow: `0 0 10px ${activeColor}`,
+          };
+        }
+      }
+
+      if (effect === 'rainbow_flow') {
+        const hue = (stepIndex * 25 + activeStepProgress * 30) % 360;
+        const isLit = animState === 'UP_WAVE' 
+          ? stepIndex <= activeStepProgress 
+          : (config.stepCount - 1 - stepIndex) <= activeStepProgress;
+        return {
+          isLit,
+          color: isLit ? `hsl(${hue}, 90%, 60%)` : '#334155',
+          brightness: isLit ? config.activeBrightness / 255 : 0.05,
+          glow: isLit ? `0 0 14px hsl(${hue}, 90%, 60%)` : 'none',
+        };
+      }
+
+      // Default: wave_cascade & curtain_fill
+      const isLit = animState === 'UP_WAVE'
+        ? stepIndex <= (effect === 'curtain_fill' ? Math.floor(activeStepProgress / 2) : activeStepProgress)
+        : (config.stepCount - 1 - stepIndex) <= (effect === 'curtain_fill' ? Math.floor(activeStepProgress / 2) : activeStepProgress);
       return {
         isLit,
         color: activeColor,
@@ -310,6 +403,18 @@ export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpda
           </button>
 
           <button
+            onClick={() => setRightViewMode('github_ota')}
+            className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition-all ${
+              rightViewMode === 'github_ota'
+                ? 'bg-purple-500 text-white font-bold shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Выбор OTA с GitHub</span>
+          </button>
+
+          <button
             onClick={() => setRightViewMode('solar')}
             className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition-all ${
               rightViewMode === 'solar'
@@ -325,12 +430,12 @@ export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpda
             onClick={() => setRightViewMode('testing')}
             className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition-all ${
               rightViewMode === 'testing'
-                ? 'bg-purple-500 text-white font-bold shadow'
+                ? 'bg-slate-700 text-slate-100 font-bold shadow'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>Тест & OTA</span>
+            <span>Тест</span>
           </button>
         </div>
       </div>
@@ -594,6 +699,139 @@ export const StairsSimulator: React.FC<StairsSimulatorProps> = ({ config, onUpda
               <div className="bg-slate-950 px-3 py-1.5 border-t border-slate-800 flex justify-between items-center text-[10px] text-slate-500 font-mono">
                 <span>Wi-Fi: {config.wifiSsid}</span>
                 <span className="text-emerald-400">● IP: 192.168.4.1</span>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: GITHUB RELEASES & OTA SELECTOR */}
+          {rightViewMode === 'github_ota' && (
+            <div className="bg-slate-950/90 rounded-2xl border-2 border-purple-800/60 p-4 md:p-5 text-xs text-slate-100 space-y-4 shadow-xl">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div>
+                  <h3 className="font-bold text-purple-300 text-sm flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-purple-400" />
+                    Выбор и обновление с GitHub (OTA)
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Установка прошивки на ESP32 по Wi-Fi из GitHub Releases
+                  </p>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-bold">
+                  OTA Wi-Fi
+                </span>
+              </div>
+
+              {/* Version Select Dropdown & Status */}
+              <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400">Текущая версия на плате:</span>
+                  <span className="font-mono text-emerald-400 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                    v{config.firmwareVersion || '1.0.4'}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-slate-300 block mb-1.5 font-semibold">
+                    🎯 Выберите версию прошивки из GitHub Releases:
+                  </label>
+                  <select
+                    value={config.firmwareVersion || '1.0.4'}
+                    onChange={(e) => onUpdateConfig && onUpdateConfig({ firmwareVersion: e.target.value })}
+                    className="w-full bg-slate-950 border border-purple-500/60 rounded-lg p-2 text-xs text-purple-200 font-mono focus:outline-none focus:border-purple-400"
+                  >
+                    <option value="1.0.4">v1.0.4 — Рекомендуемая (Борисов + Эффекты + .bat мастер)</option>
+                    <option value="1.0.3">v1.0.3 — Стабильная сборка PlatformIO</option>
+                    <option value="1.0.2">v1.0.2 — Астрономический расчет заката</option>
+                    <option value="1.0.0">v1.0.0 — Базовая версия</option>
+                  </select>
+                </div>
+
+                <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 text-[11px] text-slate-400 space-y-1 font-mono">
+                  <div className="flex justify-between">
+                    <span>Репозиторий:</span>
+                    <span className="text-purple-300 font-semibold">{config.githubUsername}/{config.githubRepo}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Файл прошивки:</span>
+                    <span className="text-slate-300">firmware.bin (~1.0 MB)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>1-Click архив:</span>
+                    <span className="text-amber-400">esp32_stairs_flasher_v{config.firmwareVersion}.zip</span>
+                  </div>
+                </div>
+
+                {/* Simulated OTA Progress Bar */}
+                {isOtaActive && (
+                  <div className="p-3 bg-purple-950/70 border border-purple-700/80 rounded-xl space-y-2 animate-fadeIn">
+                    <div className="flex justify-between text-xs font-semibold text-purple-200">
+                      <span className="flex items-center gap-1.5">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                        {otaStatusText || 'Загрузка прошивки с GitHub...'}
+                      </span>
+                      <span className="font-mono">{otaProgress}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-purple-500 to-indigo-400 transition-all duration-300"
+                        style={{ width: `${otaProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 1-Click Flash Button */}
+                <button
+                  type="button"
+                  disabled={isOtaActive}
+                  onClick={() => {
+                    setIsOtaActive(true);
+                    setOtaProgress(10);
+                    setOtaStatusText('Подключение к api.github.com/releases...');
+                    
+                    setTimeout(() => {
+                      setOtaProgress(45);
+                      setOtaStatusText(`Скачивание firmware.bin (v${config.firmwareVersion})...`);
+                    }, 800);
+
+                    setTimeout(() => {
+                      setOtaProgress(85);
+                      setOtaStatusText('Запись во Flash-память (OTA partition app0)...');
+                    }, 1800);
+
+                    setTimeout(() => {
+                      setOtaProgress(100);
+                      setOtaStatusText('✅ Прошивка завершена! Перезагрузка ESP32...');
+                    }, 2800);
+
+                    setTimeout(() => {
+                      setIsOtaActive(false);
+                      setOtaProgress(0);
+                      setOtaStatusText(null);
+                    }, 4200);
+                  }}
+                  className={`w-full py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 ${
+                    isOtaActive
+                      ? 'bg-purple-800 text-purple-200 animate-pulse cursor-not-allowed'
+                      : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-600/30'
+                  }`}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isOtaActive ? 'animate-spin' : ''}`} />
+                  {isOtaActive ? 'Прошивка по воздуху (OTA)...' : `🚀 Обновить ESP32 до v${config.firmwareVersion} по Wi-Fi`}
+                </button>
+              </div>
+
+              {/* Direct links to GitHub */}
+              <div className="flex gap-2">
+                <a
+                  href={`https://github.com/${config.githubUsername}/${config.githubRepo}/releases`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg border border-slate-800 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3 text-slate-400" />
+                  Все релизы на GitHub
+                </a>
               </div>
             </div>
           )}

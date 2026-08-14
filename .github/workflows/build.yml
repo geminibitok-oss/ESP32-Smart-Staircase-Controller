@@ -1,0 +1,124 @@
+name: Build and Release ESP32 Firmware
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 Core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.17
+
+      - name: Install Arduino Libraries
+        run: |
+          arduino-cli lib install FastLED@3.6.0
+          arduino-cli lib install ArduinoJson@7.0.4
+          arduino-cli lib install NTPClient@3.2.1
+          mkdir -p ~/Arduino/libraries/
+          git clone https://github.com/me-no-dev/ESPAsyncWebServer.git ~/Arduino/libraries/ESPAsyncWebServer
+          git clone https://github.com/me-no-dev/AsyncTCP.git ~/Arduino/libraries/AsyncTCP
+
+      - name: Determine Next Version
+        id: versioning
+        run: |
+          BUILD_NUM="${{ github.run_number }}"
+          TAG_NAME="v1.0.${BUILD_NUM}"
+          echo "CURRENT_TAG=${TAG_NAME}" >> $GITHUB_ENV
+          echo "BUILD_NUMBER=${BUILD_NUM}" >> $GITHUB_ENV
+          echo "VERSION=1.0.${BUILD_NUM}" >> $GITHUB_ENV
+
+          mkdir -p StairsEsp
+          echo "#pragma once" > StairsEsp/version.h
+          echo "#define FIRMWARE_VERSION \"1.0.${BUILD_NUM}\"" >> StairsEsp/version.h
+          echo "#define BUILD_TIMESTAMP __DATE__ \" \" __TIME__" >> StairsEsp/version.h
+
+      - name: Compile Sketch with Arduino CLI
+        run: |
+          mkdir -p build_output
+          arduino-cli compile --fqbn esp32:esp32:esp32 StairsEsp/StairsEsp.ino --output-dir build_output
+
+      - name: Package Flasher and Download esptool
+        run: |
+          cp build_output/StairsEsp.ino.bin build_output/firmware.bin 2>/dev/null || true
+          cp build_output/StairsEsp.ino.bin "build_output/stairs_${CURRENT_TAG}.bin" 2>/dev/null || true
+
+          mkdir -p temp_zip
+          curl -sL -o esptool_win.zip https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip
+          unzip -q esptool_win.zip -d temp_zip
+          find temp_zip -name "esptool.exe" -exec cp {} build_output/esptool.exe \;
+          rm -rf temp_zip esptool_win.zip
+
+          if [ -f "flash_windows.bat" ]; then
+            cp flash_windows.bat build_output/flash_windows.bat
+          fi
+
+          if [ -f "terminal.bat" ]; then
+            cp terminal.bat build_output/terminal.bat
+          fi
+
+          sed -i 's/$/\r/' build_output/flash_windows.bat 2>/dev/null || true
+          sed -i 's/$/\r/' build_output/terminal.bat 2>/dev/null || true
+
+          echo "{" > build_output/version.json
+          echo "  \"version\": \"${VERSION}\"," >> build_output/version.json
+          echo "  \"build\": ${BUILD_NUMBER}," >> build_output/version.json
+          echo "  \"release_date\": \"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"," >> build_output/version.json
+          echo "  \"bin_url\": \"https://github.com/${{ github.repository }}/releases/download/${CURRENT_TAG}/firmware.bin\"," >> build_output/version.json
+          echo "  \"changelog\": \"Automated build from commit ${{ github.sha }}\"" >> build_output/version.json
+          echo "}" >> build_output/version.json
+
+          cd build_output
+          zip -r "../esp32_stairs_flasher_${CURRENT_TAG}.zip" *
+          cd ..
+          cp "esp32_stairs_flasher_${CURRENT_TAG}.zip" build_output/ 2>/dev/null || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        with:
+          tag_name: ${{ env.CURRENT_TAG }}
+          name: "Smart Staircase Firmware ${{ env.CURRENT_TAG }}"
+          body: |
+            ### 🚀 Автоматическая сборка прошивки ESP32 (${{ env.CURRENT_TAG }})
+            - **Версия:** `${{ env.CURRENT_TAG }}`
+            - **Номер сборки:** `#${{ env.BUILD_NUMBER }}`
+            
+            ---
+            ### ⚡ Инструкция по прошивке:
+            1. **Скачайте архив `esp32_stairs_flasher_${{ env.CURRENT_TAG }}.zip`** ниже
+            2. Распакуйте и запустите **`flash_windows.bat`** (всё прошьется в 1 клик!)
+          draft: false
+          prerelease: false
+          files: |
+            build_output/esp32_stairs_flasher_${{ env.CURRENT_TAG }}.zip
+            build_output/firmware.bin
+            build_output/stairs_${{ env.CURRENT_TAG }}.bin
+            build_output/StairsEsp.ino.bin
+            build_output/StairsEsp.ino.bootloader.bin
+            build_output/StairsEsp.ino.partitions.bin
+            build_output/esptool.exe
+            build_output/flash_windows.bat
+            build_output/terminal.bat
+            build_output/version.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

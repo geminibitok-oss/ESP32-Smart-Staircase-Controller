@@ -42,11 +42,35 @@ public:
     uint8_t standbyModeType = STANDBY_MODE_TYPE;
     uint8_t effectMode = 0; // 0=Wave Cascade, 1=Smooth Fade All, 2=Curtain Fill, 3=Center Spread, 4=Meteor Chase, 5=Firefly Sparkle, 6=Rainbow Flow
 
-    void begin() {
-        FastLED.addLeds<WS2812B, PIN_LED_DATA, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip);
+    uint8_t currentDataPin = PIN_LED_DATA;
+
+    void begin(uint8_t dataPin = PIN_LED_DATA) {
+        currentDataPin = dataPin;
+        switch (dataPin) {
+            case 18: FastLED.addLeds<WS2812B, 18, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 16: FastLED.addLeds<WS2812B, 16, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 17: FastLED.addLeds<WS2812B, 17, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 19: FastLED.addLeds<WS2812B, 19, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 21: FastLED.addLeds<WS2812B, 21, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 22: FastLED.addLeds<WS2812B, 22, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 23: FastLED.addLeds<WS2812B, 23, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 4:  FastLED.addLeds<WS2812B, 4,  GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 5:  FastLED.addLeds<WS2812B, 5,  GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 25: FastLED.addLeds<WS2812B, 25, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 26: FastLED.addLeds<WS2812B, 26, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 27: FastLED.addLeds<WS2812B, 27, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 32: FastLED.addLeds<WS2812B, 32, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 33: FastLED.addLeds<WS2812B, 33, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 2:  FastLED.addLeds<WS2812B, 2,  GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 12: FastLED.addLeds<WS2812B, 12, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 13: FastLED.addLeds<WS2812B, 13, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 14: FastLED.addLeds<WS2812B, 14, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            case 15: FastLED.addLeds<WS2812B, 15, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+            default: FastLED.addLeds<WS2812B, PIN_LED_DATA, GRB>(leds, MAX_TOTAL_LEDS).setCorrection(TypicalLEDStrip); break;
+        }
         FastLED.setBrightness(activeBrightness);
         FastLED.clear(true);
-        Serial.println("[LEDS] FastLED initialized for up to " + String(MAX_TOTAL_LEDS) + " LEDs");
+        Serial.printf("[LEDS] FastLED initialized on GPIO %d for up to %d LEDs\n", dataPin, MAX_TOTAL_LEDS);
     }
 
     void setColor(uint8_t r, uint8_t g, uint8_t b) {

@@ -16,6 +16,9 @@ class OtaManager {
 public:
     unsigned long lastCheckTime = 0;
     bool isUpdating = false;
+    int progressPercent = 0;
+    String statusMessage = "idle";
+    String lastError = "";
 
     void begin() {
         Serial.println("[OTA] GitHub Auto-OTA Manager initialized.");
@@ -77,9 +80,37 @@ public:
         http.end();
     }
 
-private:
+    bool triggerCustomUpdate(String binUrl, void (*onStartUpdate)() = nullptr) {
+        if (isUpdating) return false;
+        if (binUrl.length() == 0) return false;
+
+        Serial.println("[OTA] ⚡ Manual GitHub OTA update requested for URL: " + binUrl);
+        if (onStartUpdate) onStartUpdate();
+        
+        // Spawn asynchronous flash in background or perform synchronous flash
+        performOtaUpdate(binUrl);
+        return true;
+    }
+
+    String getOtaStatusJson() {
+        JsonDocument doc;
+        doc["is_updating"] = isUpdating;
+        doc["progress"] = progressPercent;
+        doc["status"] = statusMessage;
+        doc["error"] = lastError;
+        doc["current_version"] = FIRMWARE_VERSION;
+
+        String out;
+        serializeJson(doc, out);
+        return out;
+    }
+
     void performOtaUpdate(String binUrl) {
         isUpdating = true;
+        statusMessage = "downloading";
+        progressPercent = 10;
+        lastError = "";
+
         WiFiClientSecure secureClient;
         secureClient.setInsecure();
 
@@ -87,18 +118,26 @@ private:
         httpUpdate.rebootOnUpdate(true);
 
         Serial.println("[OTA] Downloading binary from: " + binUrl);
+        statusMessage = "flashing";
+        progressPercent = 50;
+
         t_httpUpdate_return ret = httpUpdate.update(secureClient, binUrl);
 
         switch (ret) {
             case HTTP_UPDATE_FAILED:
-                Serial.printf("[OTA] Update FAILED! Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+                lastError = String(httpUpdate.getLastErrorString());
+                statusMessage = "failed";
+                Serial.printf("[OTA] Update FAILED! Error (%d): %s\n", httpUpdate.getLastError(), lastError.c_str());
                 isUpdating = false;
                 break;
             case HTTP_UPDATE_NO_UPDATES:
+                statusMessage = "no_updates";
                 Serial.println("[OTA] No updates available.");
                 isUpdating = false;
                 break;
             case HTTP_UPDATE_OK:
+                statusMessage = "success";
+                progressPercent = 100;
                 Serial.println("[OTA] UPDATE SUCCESSFUL! Rebooting ESP32 into new firmware...");
                 break;
         }

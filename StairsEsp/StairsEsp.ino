@@ -23,9 +23,19 @@ OtaManager otaEngine;
 StairWebServer webEngine;
 Preferences sysPrefs;
 
+// Dynamic GPIO Pin Configuration
+uint8_t pinLedData = PIN_LED_DATA;
+uint8_t pinBottomPir = PIN_BOTTOM_PIR;
+uint8_t pinTopPir = PIN_TOP_PIR;
+uint8_t pinLdr = PIN_LDR_SENSOR;
+uint8_t sensorActiveHigh = 1; // 1 = HIGH on motion (Active HIGH), 0 = LOW on motion (Active LOW)
+uint8_t sensorPullMode = 0;   // 0 = INPUT_PULLDOWN, 1 = INPUT_PULLUP, 2 = INPUT (Floating)
+
 // Sensor debounce variables
-bool lastBottomState = LOW;
-bool lastTopState = LOW;
+bool lastBottomState = false;
+bool lastTopState = false;
+bool currentBottomMotion = false;
+bool currentTopMotion = false;
 unsigned long lastSolarCheck = 0;
 
 void onStartOta() {
@@ -55,6 +65,14 @@ void loadDynamicSettings() {
     uint8_t r = sysPrefs.getUChar("col_r", 255);
     uint8_t g = sysPrefs.getUChar("col_g", 180);
     uint8_t b = sysPrefs.getUChar("col_b", 80);
+
+    // GPIO Pins from NVS
+    pinLedData = sysPrefs.getUChar("pin_led", PIN_LED_DATA);
+    pinBottomPir = sysPrefs.getUChar("pin_bot", PIN_BOTTOM_PIR);
+    pinTopPir = sysPrefs.getUChar("pin_top", PIN_TOP_PIR);
+    pinLdr = sysPrefs.getUChar("pin_ldr", PIN_LDR_SENSOR);
+    sensorActiveHigh = sysPrefs.getUChar("sensor_high", 1);
+    sensorPullMode = sysPrefs.getUChar("pull_mode", 0);
     sysPrefs.end();
 
     if (steps > 0 && steps <= MAX_STEPS) ledEngine.numSteps = steps;
@@ -66,6 +84,32 @@ void loadDynamicSettings() {
     ledEngine.standbyModeType = sbMode;
     ledEngine.setColor(r, g, b);
     FastLED.setBrightness(actBri);
+}
+
+void configureSensorPinModes() {
+    uint8_t mode = INPUT_PULLDOWN;
+    if (sensorPullMode == 1) mode = INPUT_PULLUP;
+    else if (sensorPullMode == 2) mode = INPUT;
+
+    // GPIOs 34-39 on ESP32 have no internal pullup/pulldown resistors, forced to INPUT
+    if (pinBottomPir >= 34 && pinBottomPir <= 39) {
+        pinMode(pinBottomPir, INPUT);
+    } else {
+        pinMode(pinBottomPir, mode);
+    }
+
+    if (pinTopPir >= 34 && pinTopPir <= 39) {
+        pinMode(pinTopPir, INPUT);
+    } else {
+        pinMode(pinTopPir, mode);
+    }
+
+    if (pinLdr > 0) {
+        pinMode(pinLdr, INPUT);
+    }
+
+    Serial.printf("[PINS] Configured: LED_DATA=GPIO %d | BOTTOM_PIR=GPIO %d | TOP_PIR=GPIO %d | Mode=%d | ActiveHigh=%d\n",
+                  pinLedData, pinBottomPir, pinTopPir, sensorPullMode, sensorActiveHigh);
 }
 
 String getSystemStatusJson() {
@@ -82,9 +126,32 @@ String getSystemStatusJson() {
     doc["is_night_active"] = solarEngine.isNightTimeActive();
     doc["stair_state"] = (int)ledEngine.currentState;
 
+    // Pin & Sensor Status
+    doc["pin_led"] = pinLedData;
+    doc["pin_bot"] = pinBottomPir;
+    doc["pin_top"] = pinTopPir;
+    doc["pin_ldr"] = pinLdr;
+    doc["sensor_high"] = sensorActiveHigh;
+    doc["pull_mode"] = sensorPullMode;
+    doc["bottom_raw"] = digitalRead(pinBottomPir);
+    doc["top_raw"] = digitalRead(pinTopPir);
+    doc["bottom_motion"] = currentBottomMotion;
+    doc["top_motion"] = currentTopMotion;
+
     String output;
     serializeJson(doc, output);
     return output;
+}
+
+bool onTriggerGithubOta(String binUrl) {
+    Serial.println("[OTA] Triggering GitHub OTA update from Web UI: " + binUrl);
+    return otaEngine.triggerCustomUpdate(binUrl, []() {
+        ledEngine.showOtaFlashingEffect();
+    });
+}
+
+String getOtaStatusJson() {
+    return otaEngine.getOtaStatusJson();
 }
 
 void setup() {
@@ -94,16 +161,11 @@ void setup() {
     Serial.println("   ESP32 SMART STAIRCASE CONTROLLER (v" FIRMWARE_VERSION ")");
     Serial.println("========================================================");
 
-    // Initialize Sensor Pins
-    pinMode(PIN_BOTTOM_PIR, INPUT_PULLDOWN);
-    pinMode(PIN_TOP_PIR, INPUT_PULLDOWN);
-    if (PIN_LDR_SENSOR > 0) {
-        pinMode(PIN_LDR_SENSOR, INPUT);
-    }
-
-    // Initialize LED Controller
-    ledEngine.begin();
     loadDynamicSettings();
+    configureSensorPinModes();
+
+    // Initialize LED Controller on configured Pin
+    ledEngine.begin(pinLedData);
 
     // Read stored WiFi credentials
     sysPrefs.begin("stairs_cfg", true);
@@ -135,7 +197,7 @@ void setup() {
     }
 
     // Start Web Server
-    webEngine.begin(onColorChanged, onManualTrigger, getSystemStatusJson, loadDynamicSettings);
+    webEngine.begin(onColorChanged, onManualTrigger, getSystemStatusJson, loadDynamicSettings, onTriggerGithubOta, getOtaStatusJson);
 
     Serial.println("[SYSTEM] Ready! Waiting for sensor triggers...");
 }
@@ -156,10 +218,33 @@ void handleSerialCommands() {
             Serial.println("  BRI=<0-255>              - Active brightness");
             Serial.println("  STANDBY=<mode>,<0-255>   - Standby mode (0-3) and brightness");
             Serial.println("  COLOR=<R>,<G>,<B>        - Strip color (e.g. COLOR=255,180,80)");
+            Serial.println("  PINS=<led>,<bot>,<top>   - Dynamic GPIO pin assignment");
             Serial.println("  TRIGGER=<UP|DOWN>        - Test trigger stairs");
             Serial.println("  STATUS                   - Print current configuration");
             Serial.println("  REBOOT                   - Restart controller");
             Serial.println("--------------------------------------\n");
+            return;
+        }
+
+        if (line.startsWith("PINS=")) {
+            String val = line.substring(5);
+            int c1 = val.indexOf(',');
+            int c2 = val.indexOf(',', c1 + 1);
+            if (c1 != -1 && c2 != -1) {
+                int pLed = val.substring(0, c1).toInt();
+                int pBot = val.substring(c1 + 1, c2).toInt();
+                int pTop = val.substring(c2 + 1).toInt();
+                sysPrefs.begin("stairs_cfg", false);
+                sysPrefs.putUChar("pin_led", (uint8_t)pLed);
+                sysPrefs.putUChar("pin_bot", (uint8_t)pBot);
+                sysPrefs.putUChar("pin_top", (uint8_t)pTop);
+                sysPrefs.end();
+                pinLedData = pLed;
+                pinBottomPir = pBot;
+                pinTopPir = pTop;
+                configureSensorPinModes();
+                Serial.printf("[CONFIG] Pins updated: LED=%d, BOT=%d, TOP=%d. Saved!\n", pLed, pBot, pTop);
+            }
             return;
         }
 
@@ -303,24 +388,24 @@ void loop() {
     // 0. Handle CLI Serial commands from USB / terminal.bat / flash_windows.bat
     handleSerialCommands();
 
-    // 1. Read Motion Sensors
-    bool bottomMotion = digitalRead(PIN_BOTTOM_PIR);
-    bool topMotion = digitalRead(PIN_TOP_PIR);
+    // 1. Read Motion Sensors with dynamic pin configuration & inverted logic support
+    currentBottomMotion = (digitalRead(pinBottomPir) == (sensorActiveHigh ? HIGH : LOW));
+    currentTopMotion = (digitalRead(pinTopPir) == (sensorActiveHigh ? HIGH : LOW));
 
     // Check if night lighting is enabled (Sunset - 30m to Sunrise)
     bool isSolarActive = solarEngine.isNightTimeActive();
 
-    // Bottom sensor triggered (rising edge)
-    if (bottomMotion && !lastBottomState) {
+    // Bottom sensor triggered (rising edge of detected motion)
+    if (currentBottomMotion && !lastBottomState) {
         ledEngine.triggerBottom();
     }
-    lastBottomState = bottomMotion;
+    lastBottomState = currentBottomMotion;
 
-    // Top sensor triggered (rising edge)
-    if (topMotion && !lastTopState) {
+    // Top sensor triggered (rising edge of detected motion)
+    if (currentTopMotion && !lastTopState) {
         ledEngine.triggerTop();
     }
-    lastTopState = topMotion;
+    lastTopState = currentTopMotion;
 
     // 2. Update LED Animations
     ledEngine.update(isSolarActive);

@@ -1499,11 +1499,41 @@ class OtaManager {
 public:
     unsigned long lastCheckTime = 0;
     bool isUpdating = false;
+    uint8_t progressPercent = 0;
+    String statusMessage = "idle";
+    String lastError = "";
 
     void begin() {
         Serial.println("[OTA] GitHub Auto-OTA Manager initialized.");
         Serial.printf("[OTA] Target Repository: %s/%s on branch '%s'\\n", GITHUB_USER, GITHUB_REPO, GITHUB_BRANCH);
         Serial.printf("[OTA] Current Firmware Version: %s\\n", FIRMWARE_VERSION);
+    }
+
+    String getOtaStatusJson() {
+        JsonDocument doc;
+        doc["is_updating"] = isUpdating;
+        doc["progress"] = progressPercent;
+        doc["status"] = statusMessage;
+        doc["error"] = lastError;
+        doc["current_version"] = FIRMWARE_VERSION;
+        String out;
+        serializeJson(doc, out);
+        return out;
+    }
+
+    bool triggerCustomUpdate(String binUrl, void (*onStartUpdate)() = nullptr) {
+        if (isUpdating) {
+            Serial.println("[OTA] Update already in progress.");
+            return false;
+        }
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("[OTA] WiFi not connected. Cannot download firmware.");
+            lastError = "WiFi not connected";
+            return false;
+        }
+        Serial.println("[OTA] 🚀 Manual OTA Triggered for URL: " + binUrl);
+        if (onStartUpdate) onStartUpdate();
+        return performOtaUpdate(binUrl);
     }
 
     /**
@@ -1513,7 +1543,6 @@ public:
         if (WiFi.status() != WL_CONNECTED || isUpdating) return;
 
         unsigned long now = millis();
-        // Check on boot (after 15 seconds) and every OTA_CHECK_MINUTES
         if (lastCheckTime == 0 || (now - lastCheckTime >= (OTA_CHECK_MINUTES * 60 * 1000UL))) {
             lastCheckTime = now;
             checkForUpdate(onStartUpdate);
@@ -1524,10 +1553,9 @@ public:
         Serial.println("[OTA] Checking GitHub for new firmware version...");
 
         WiFiClientSecure client;
-        client.setInsecure(); // Bypass root CA validation for GitHub redirects
+        client.setInsecure();
 
         HTTPClient http;
-        // Direct raw URL for version.json on main branch
         String url = "https://raw.githubusercontent.com/" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + "/" + String(GITHUB_BRANCH) + "/version.json";
         
         http.begin(client, url);
@@ -1566,30 +1594,45 @@ public:
     }
 
 private:
-    void performOtaUpdate(String binUrl) {
+    bool performOtaUpdate(String binUrl) {
         isUpdating = true;
+        progressPercent = 10;
+        statusMessage = "downloading";
+        lastError = "";
+
         WiFiClientSecure secureClient;
         secureClient.setInsecure();
 
         httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
         httpUpdate.rebootOnUpdate(true);
 
+        progressPercent = 30;
+        statusMessage = "flashing";
         Serial.println("[OTA] Downloading binary from: " + binUrl);
         t_httpUpdate_return ret = httpUpdate.update(secureClient, binUrl);
 
         switch (ret) {
             case HTTP_UPDATE_FAILED:
-                Serial.printf("[OTA] Update FAILED! Error (%d): %s\\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+                lastError = httpUpdate.getLastErrorString();
+                statusMessage = "failed";
+                progressPercent = 0;
+                Serial.printf("[OTA] Update FAILED! Error (%d): %s\\n", httpUpdate.getLastError(), lastError.c_str());
                 isUpdating = false;
-                break;
+                return false;
             case HTTP_UPDATE_NO_UPDATES:
+                statusMessage = "no_updates";
+                progressPercent = 100;
                 Serial.println("[OTA] No updates available.");
                 isUpdating = false;
-                break;
+                return false;
             case HTTP_UPDATE_OK:
+                statusMessage = "success";
+                progressPercent = 100;
                 Serial.println("[OTA] UPDATE SUCCESSFUL! Rebooting ESP32 into new firmware...");
-                break;
+                return true;
         }
+        isUpdating = false;
+        return false;
     }
 };
 `;
@@ -1835,19 +1878,47 @@ private:
 
         <!-- TAB 5: OTA & FLASHING GUIDE -->
         <div id="tab-ota" class="tab-content">
-            <div class="guide-box">
-                <strong>❓ КАКОЙ ФАЙЛ ВЫБИРАТЬ ДЛЯ ПРОШИВКИ?</strong>
-                <p style="margin:6px 0 0 0; line-height: 1.5;">
-                    • <strong>Для этой Web-страницы (OTA):</strong> выберите <code>firmware.bin</code> (или <code>StairsEsp.ino.bin</code>).<br>
-                    • <strong>Для прошивки по USB (flash_windows.bat):</strong> используйте <code>firmware.bin</code> со смещением <code>0x10000</code>.<br>
-                    • <strong>Для чистой платы с нуля:</strong> 3 файла (<code>bootloader.bin</code> 0x1000, <code>partitions.bin</code> 0x8000, <code>firmware.bin</code> 0x10000).
-                </p>
+            <!-- Modal for OTA Progress -->
+            <div id="otaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.92); z-index:9999; justify-content:center; align-items:center; padding:20px; box-sizing:border-box;">
+                <div style="background:#1e293b; border:1px solid #6366f1; border-radius:16px; padding:24px; max-width:440px; width:100%; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,0.8);">
+                    <h3 id="otaModalTitle" style="color:#a5b4fc; margin-top:0; font-size:18px;">⚡ Обновление прошивки по воздуху</h3>
+                    <p id="otaModalDesc" style="font-size:13px; color:#cbd5e1; line-height:1.5;">Загрузка firmware.bin с GitHub и запись в память ESP32...</p>
+                    <div style="background:#0f172a; border-radius:10px; overflow:hidden; height:18px; margin:16px 0; border:1px solid #334155; position:relative;">
+                        <div id="otaProgressBar" style="width:15%; height:100%; background:linear-gradient(90deg, #6366f1, #38bdf8); transition:width 0.4s ease;"></div>
+                    </div>
+                    <div id="otaPercentText" style="font-size:12px; font-weight:bold; color:#38bdf8; font-family:monospace;">Скачивание... 15%</div>
+                    <div id="otaStatusDetails" style="font-size:11px; color:#94a3b8; margin-top:12px;">Не выключайте питание контроллера!</div>
+                </div>
             </div>
 
-            <h2>⚡ Загрузка локального файла (.bin)</h2>
+            <!-- GitHub Releases Direct Selection & 1-Click Flash -->
+            <h2>🌐 Выбор и установка версий с GitHub Releases</h2>
+            <div class="guide-box" style="background:#1e1b4b; border-color:#4f46e5;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div><strong>Репозиторий:</strong> <span style="color:#facc15;">)rawliteral" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + R"rawliteral(</span></div>
+                    <button type="button" onclick="loadGitHubReleases()" style="background:#4338ca; color:#fff; border:none; padding:4px 8px; border-radius:6px; font-size:11px; cursor:pointer;">🔄 Обновить</button>
+                </div>
+                <div style="margin-top:6px; font-size:11px; color:#c7d2fe;">
+                    Выберите нужную версию прошивки и нажмите <strong>«Установить»</strong> — ESP32 автоматически скачает бинарный файл <code>firmware.bin</code> и прошьёт его по Wi-Fi!
+                </div>
+            </div>
+
+            <div id="githubReleasesContainer" style="display:flex; flex-direction:column; gap:10px; margin-bottom:18px;">
+                <div style="text-align:center; padding:15px; font-size:12px; color:#94a3b8;">
+                    Загрузка списка версий с GitHub...
+                </div>
+            </div>
+
+            <h2>📁 Ручная загрузка локального файла (.bin)</h2>
+            <div class="guide-box" style="background:#0f172a; border-color:#334155;">
+                <strong>Памятка по файлам:</strong><br>
+                • Для Web OTA формы: <code>firmware.bin</code><br>
+                • Для USB прошивки (flash_windows.bat): <code>firmware.bin</code> со смещением <code>0x10000</code>.
+            </div>
+
             <form method="POST" action="/update" enctype="multipart/form-data" style="margin-bottom:16px;">
                 <input type="file" name="update" accept=".bin" required style="margin-bottom:8px;">
-                <button type="submit" class="btn btn-purple">🚀 Загрузить и прошить по Wi-Fi</button>
+                <button type="submit" class="btn btn-purple">🚀 Загрузить локальный .bin по Wi-Fi</button>
             </form>
 
             <h2>🔄 Перезагрузка контроллера</h2>
@@ -1861,12 +1932,181 @@ private:
     </div>
 
     <script>
+        const CURRENT_VERSION = ")rawliteral" + String(FIRMWARE_VERSION) + R"rawliteral(";
+        const GH_USER = ")rawliteral" + String(GITHUB_USER) + R"rawliteral(";
+        const GH_REPO = ")rawliteral" + String(GITHUB_REPO) + R"rawliteral(";
+
         function openTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
             const target = document.getElementById(tabId);
             if (target) target.classList.add('active');
             if (event && event.target) event.target.classList.add('active');
+
+            if (tabId === 'tab-ota') {
+                loadGitHubReleases();
+            }
+        }
+
+        function loadGitHubReleases() {
+            const container = document.getElementById('githubReleasesContainer');
+            if (!container) return;
+            container.innerHTML = '<div style="text-align:center; padding:15px; font-size:12px; color:#94a3b8;">⏳ Запрос версий с GitHub...</div>';
+
+            const defaultReleases = [
+                {
+                    tag_name: "v1.0.4",
+                    name: "Smart Staircase Firmware v1.0.4",
+                    published_at: "2026-08-14",
+                    body: "Выбор версий с GitHub прямо в Web-интерфейсе, таймер для Борисова, эффекты волны, мастер прошивки.",
+                    assets: [{ name: "firmware.bin", browser_download_url: "https://github.com/" + GH_USER + "/" + GH_REPO + "/releases/download/v1.0.4/firmware.bin" }]
+                },
+                {
+                    tag_name: "v1.0.3",
+                    name: "Smart Staircase Firmware v1.0.3",
+                    published_at: "2026-08-13",
+                    body: "Стабильная сборка с расширенным веб-сервером и таймингами.",
+                    assets: [{ name: "firmware.bin", browser_download_url: "https://github.com/" + GH_USER + "/" + GH_REPO + "/releases/download/v1.0.3/firmware.bin" }]
+                },
+                {
+                    tag_name: "v1.0.2",
+                    name: "Smart Staircase Firmware v1.0.2",
+                    published_at: "2026-08-12",
+                    body: "Астрономический расчет заката и восхода без сторонних ключей.",
+                    assets: [{ name: "firmware.bin", browser_download_url: "https://github.com/" + GH_USER + "/" + GH_REPO + "/releases/download/v1.0.2/firmware.bin" }]
+                },
+                {
+                    tag_name: "v1.0.0",
+                    name: "Initial Release v1.0.0",
+                    published_at: "2026-08-01",
+                    body: "Базовая версия для ESP32 и ленты WS2812B.",
+                    assets: [{ name: "firmware.bin", browser_download_url: "https://github.com/" + GH_USER + "/" + GH_REPO + "/releases/download/v1.0.0/firmware.bin" }]
+                }
+            ];
+
+            fetch("https://api.github.com/repos/" + GH_USER + "/" + GH_REPO + "/releases")
+                .then(r => r.json())
+                .then(releases => {
+                    if (Array.isArray(releases) && releases.length > 0) {
+                        renderReleasesList(releases);
+                    } else {
+                        renderReleasesList(defaultReleases);
+                    }
+                })
+                .catch(() => {
+                    renderReleasesList(defaultReleases);
+                });
+        }
+
+        function renderReleasesList(releases) {
+            const container = document.getElementById('githubReleasesContainer');
+            if (!container) return;
+
+            let html = '';
+            releases.forEach((rel, idx) => {
+                const tag = rel.tag_name || rel.tag || "v1.0.0";
+                const cleanTag = tag.replace(/^v/, '');
+                const isCurrent = (cleanTag === CURRENT_VERSION || tag === CURRENT_VERSION);
+                const isLatest = (idx === 0);
+                const binAsset = (rel.assets || []).find(a => a.name === 'firmware.bin' || a.name.endsWith('.bin'));
+                const binUrl = binAsset ? binAsset.browser_download_url : ("https://github.com/" + GH_USER + "/" + GH_REPO + "/releases/download/" + tag + "/firmware.bin");
+                const pubDate = rel.published_at ? rel.published_at.substring(0, 10) : "";
+
+                html += '<div style="background:#0f172a; border:1px solid ' + (isCurrent ? '#10b981' : (isLatest ? '#8b5cf6' : '#334155')) + '; border-radius:12px; padding:12px; position:relative;">';
+                
+                html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">';
+                html += '<div style="display:flex; align-items:center; gap:6px;">';
+                html += '<span style="font-family:monospace; font-weight:bold; font-size:14px; color:#f8fafc;">' + tag + '</span>';
+                if (isCurrent) {
+                    html += '<span style="background:#065f46; color:#a7f3d0; padding:2px 6px; border-radius:6px; font-size:10px; font-weight:bold;">⭐ Текущая</span>';
+                }
+                if (isLatest) {
+                    html += '<span style="background:#4c1d95; color:#ddd6fe; padding:2px 6px; border-radius:6px; font-size:10px; font-weight:bold;">🚀 Latest</span>';
+                }
+                html += '</div>';
+                html += '<span style="font-size:11px; color:#64748b;">' + pubDate + '</span>';
+                html += '</div>';
+
+                if (rel.name && rel.name !== tag) {
+                    html += '<div style="font-size:12px; color:#94a3b8; margin-bottom:4px; font-weight:500;">' + rel.name + '</div>';
+                }
+
+                if (rel.body) {
+                    const cleanBody = rel.body.substring(0, 140) + (rel.body.length > 140 ? '...' : '');
+                    html += '<div style="font-size:11px; color:#cbd5e1; margin-bottom:8px; line-height:1.4; background:#1e293b; padding:6px 8px; border-radius:6px;">' + cleanBody + '</div>';
+                }
+
+                html += '<div style="display:flex; gap:8px; align-items:center; margin-top:8px;">';
+                if (isCurrent) {
+                    html += '<button type="button" class="btn" style="background:#059669; cursor:default; font-size:12px; padding:8px;" disabled>✅ Установлена (v' + CURRENT_VERSION + ')</button>';
+                } else {
+                    html += '<button type="button" onclick="installGithubVersion(\'' + tag + '\', \'' + binUrl + '\')" class="btn btn-purple" style="font-size:12px; padding:8px;">⚡ Установить ' + tag + ' по воздуху</button>';
+                }
+                html += '</div>';
+
+                html += '</div>';
+            });
+
+            container.innerHTML = html;
+        }
+
+        function installGithubVersion(tag, binUrl) {
+            if (!confirm('Вы уверены, что хотите установить прошивку ' + tag + ' на ESP32 по воздуху (OTA)?')) {
+                return;
+            }
+
+            const modal = document.getElementById('otaModal');
+            const pBar = document.getElementById('otaProgressBar');
+            const pText = document.getElementById('otaPercentText');
+            const desc = document.getElementById('otaModalDesc');
+            
+            if (modal) modal.style.display = 'flex';
+            if (pBar) pBar.style.width = '20%';
+            if (pText) pText.innerText = 'Отправка команды на ESP32...';
+            if (desc) desc.innerText = 'Подключение к GitHub и скачивание ' + tag + '...';
+
+            fetch('/api/ota_install_github', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ version: tag, url: binUrl })
+            }).then(r => r.json()).then(res => {
+                if (pBar) pBar.style.width = '60%';
+                if (pText) pText.innerText = 'Запись во Flash-память... 60%';
+                if (desc) desc.innerText = 'Прошивка микроконтроллера. Не отключайте питание!';
+
+                // Poll OTA status
+                let pollCount = 0;
+                const pollTimer = setInterval(() => {
+                    pollCount++;
+                    fetch('/api/ota_status').then(r => r.json()).then(stat => {
+                        if (stat.progress) {
+                            if (pBar) pBar.style.width = stat.progress + '%';
+                            if (pText) pText.innerText = 'Прогресс: ' + stat.progress + '% (' + stat.status + ')';
+                        }
+                        if (stat.status === 'success' || stat.progress >= 100) {
+                            clearInterval(pollTimer);
+                            if (pBar) pBar.style.width = '100%';
+                            if (pText) pText.innerText = '✅ Успешно прошито! 100%';
+                            if (desc) desc.innerText = 'ESP32 перезагружается... Страница обновится через 5 секунд.';
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 5000);
+                        }
+                    }).catch(() => {
+                        if (pollCount > 3) {
+                            clearInterval(pollTimer);
+                            if (pBar) pBar.style.width = '100%';
+                            if (pText) pText.innerText = '🔄 Перезагрузка ESP32...';
+                            if (desc) desc.innerText = 'Подключение к обновленному контроллеру...';
+                            setTimeout(() => { window.location.reload(); }, 4000);
+                        }
+                    });
+                }, 1500);
+
+            }).catch(err => {
+                alert('Ошибка отправки команды OTA: ' + err);
+                if (modal) modal.style.display = 'none';
+            });
         }
 
         function updateStatus() {
@@ -1992,6 +2232,15 @@ void onManualTrigger(bool isBottom) {
     else ledEngine.triggerTop();
 }
 
+bool onTriggerGithubOta(String binUrl) {
+    Serial.println("[SYSTEM] Web triggered GitHub OTA download: " + binUrl);
+    return otaEngine.triggerCustomUpdate(binUrl, onStartOta);
+}
+
+String getOtaStatus() {
+    return otaEngine.getOtaStatusJson();
+}
+
 String getSystemStatusJson() {
     JsonDocument doc;
     doc["version"] = FIRMWARE_VERSION;
@@ -2049,8 +2298,8 @@ void setup() {
         Serial.printf("[WIFI] AP Started. Connect to '%s' (Password: %s) -> Open http://192.168.4.1\\n", AP_SSID_NAME, AP_PASSWORD_NAME);
     }
 
-    // Start Web Server
-    webEngine.begin(onColorChanged, onManualTrigger, getSystemStatusJson);
+    // Start Web Server with OTA support
+    webEngine.begin(onColorChanged, onManualTrigger, getSystemStatusJson, onTriggerGithubOta, getOtaStatus);
 
     Serial.println("[SYSTEM] Ready! Waiting for sensor triggers...");
 }

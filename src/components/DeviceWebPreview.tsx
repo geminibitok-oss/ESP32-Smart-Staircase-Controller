@@ -26,6 +26,77 @@ export const DeviceWebPreview: React.FC<DeviceWebPreviewProps> = ({ config, onCo
   const [wifiList, setWifiList] = useState<string[]>([]);
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string>('firmware.bin');
+  const [isOtaModalOpen, setIsOtaModalOpen] = useState<boolean>(false);
+  const [otaProgress, setOtaProgress] = useState<number>(0);
+  const [otaTargetVersion, setOtaTargetVersion] = useState<string>('v1.0.4');
+  const [otaStatusText, setOtaStatusText] = useState<string>('');
+
+  const githubReleasesList = [
+    {
+      tag: 'v1.0.4',
+      name: 'Smart Staircase Firmware v1.0.4',
+      date: '14.08.2026',
+      isLatest: true,
+      desc: 'Выбор версий с GitHub прямо в Web-интерфейсе, таймер для Борисова, эффекты волны, мастер прошивки.',
+      binSize: '1.24 МБ',
+    },
+    {
+      tag: 'v1.0.3',
+      name: 'Smart Staircase Firmware v1.0.3',
+      date: '13.08.2026',
+      isLatest: false,
+      desc: 'Стабильная сборка с расширенным веб-сервером и таймингами ступеней.',
+      binSize: '1.22 МБ',
+    },
+    {
+      tag: 'v1.0.2',
+      name: 'Smart Staircase Firmware v1.0.2',
+      date: '12.08.2026',
+      isLatest: false,
+      desc: 'Астрономический расчет заката и восхода без сторонних ключей.',
+      binSize: '1.20 МБ',
+    },
+    {
+      tag: 'v1.0.0',
+      name: 'Initial Release v1.0.0',
+      date: '01.08.2026',
+      isLatest: false,
+      desc: 'Базовая версия для ESP32 и адресной ленты WS2812B.',
+      binSize: '1.15 МБ',
+    },
+  ];
+
+  const triggerGithubOtaInstall = (tag: string) => {
+    setOtaTargetVersion(tag);
+    setIsOtaModalOpen(true);
+    setOtaProgress(15);
+    setOtaStatusText(`1/4: Подключение к GitHub API & скачивание firmware.bin (${tag})...`);
+
+    setTimeout(() => {
+      setOtaProgress(45);
+      setOtaStatusText(`2/4: Проверка контрольной суммы MD5 и очистка Flash...`);
+    }, 1000);
+
+    setTimeout(() => {
+      setOtaProgress(80);
+      setOtaStatusText(`3/4: Запись прошивки ${tag} во Flash-память ESP32...`);
+    }, 2000);
+
+    setTimeout(() => {
+      setOtaProgress(100);
+      setOtaStatusText(`4/4: Завершено! Перезагрузка ESP32...`);
+    }, 3000);
+
+    setTimeout(() => {
+      setIsOtaModalOpen(false);
+      const cleanVer = tag.replace(/^v/, '');
+      if (onConfigUpdate) {
+        onConfigUpdate({ firmwareVersion: cleanVer });
+      }
+      setSaveBanner(`✅ Прошивка ESP32 успешно обновлена до ${tag}! Контроллер готов к работе.`);
+      setTimeout(() => setSaveBanner(null), 5000);
+    }, 4200);
+  };
 
   const handleColorChange = (hex: string) => {
     setSelectedColor(hex);
@@ -492,24 +563,129 @@ export const DeviceWebPreview: React.FC<DeviceWebPreviewProps> = ({ config, onCo
 
           {/* TAB 5: Прошивка и OTA */}
           {activeWebTab === 'ota' && (
-            <div className="space-y-3.5 animate-fadeIn">
+            <div className="space-y-3.5 animate-fadeIn relative">
+              {/* OTA Flashing Progress Modal */}
+              {isOtaModalOpen && (
+                <div className="absolute inset-0 bg-slate-950/95 z-50 rounded-xl p-4 flex flex-col items-center justify-center text-center space-y-3 border border-purple-500/50 shadow-2xl animate-fadeIn">
+                  <div className="w-10 h-10 rounded-full bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 animate-pulse">
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-purple-300">
+                      ⚡ Прошивка ESP32 по воздуху (OTA)
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-1 font-mono">{otaTargetVersion}</p>
+                  </div>
+
+                  <div className="w-full bg-slate-900 rounded-full h-3 overflow-hidden border border-slate-700">
+                    <div
+                      className="bg-gradient-to-r from-purple-500 via-sky-400 to-emerald-400 h-full transition-all duration-300 rounded-full"
+                      style={{ width: `${otaProgress}%` }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between w-full text-[11px] text-slate-400 font-mono">
+                    <span>{otaStatusText}</span>
+                    <span className="font-bold text-sky-400">{otaProgress}%</span>
+                  </div>
+
+                  <p className="text-[10px] text-amber-400/90 font-medium">
+                    ⚠️ Не выключайте питание контроллера и не закрывайте страницу!
+                  </p>
+                </div>
+              )}
+
+              {/* GitHub Releases Direct Selection & 1-Click Flash */}
+              <div>
+                <div className="flex items-center justify-between pb-1 border-b border-slate-800 mb-2">
+                  <h2 className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                    🌐 Релизы с GitHub (Прямая установка на ESP)
+                  </h2>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {config.githubRepo || 'alex_stairs_firmware'}
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {githubReleasesList.map((rel) => {
+                    const cleanTag = rel.tag.replace(/^v/, '');
+                    const isCurrent = cleanTag === (config.firmwareVersion || '1.0.4');
+                    return (
+                      <div
+                        key={rel.tag}
+                        className={`p-2.5 rounded-xl border transition-all ${
+                          isCurrent
+                            ? 'bg-emerald-950/30 border-emerald-500/60 shadow-sm'
+                            : rel.isLatest
+                            ? 'bg-purple-950/30 border-purple-500/50 hover:border-purple-400'
+                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-xs text-white">{rel.tag}</span>
+                            {isCurrent && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-900/80 text-emerald-300 border border-emerald-700">
+                                ⭐ Текущая
+                              </span>
+                            )}
+                            {rel.isLatest && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-900/80 text-purple-300 border border-purple-700">
+                                🚀 Latest
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400">{rel.date}</span>
+                        </div>
+
+                        <p className="text-[11px] text-slate-300 mb-2 leading-relaxed bg-slate-900/60 p-1.5 rounded-lg">
+                          {rel.desc}
+                        </p>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            📦 firmware.bin ({rel.binSize})
+                          </span>
+
+                          {isCurrent ? (
+                            <button
+                              disabled
+                              className="py-1 px-2.5 rounded-lg text-[11px] font-bold bg-emerald-700/60 text-emerald-200 cursor-default flex items-center gap-1"
+                            >
+                              <CheckCircle2 className="w-3 h-3" /> Установлена
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => triggerGithubOtaInstall(rel.tag)}
+                              className="py-1 px-2.5 rounded-lg text-[11px] font-bold bg-purple-600 hover:bg-purple-500 text-white transition-all shadow active:scale-95 flex items-center gap-1"
+                            >
+                              <Zap className="w-3 h-3 text-amber-300" /> Установить {rel.tag}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Detailed File Choice Guide */}
-              <div className="p-3 bg-indigo-950/80 rounded-xl border border-indigo-700/60 text-xs text-indigo-200 space-y-2">
+              <div className="p-3 bg-indigo-950/80 rounded-xl border border-indigo-700/60 text-xs text-indigo-200 space-y-1.5">
                 <div className="font-bold text-white flex items-center gap-1.5">
                   <FileCode2 className="w-4 h-4 text-sky-300" />
-                  КАКОЙ ФАЙЛ ВЫБИРАТЬ ДЛЯ ПРОШИВКИ?
+                  Какой файл выбирать для прошивки?
                 </div>
                 <div className="text-[11px] space-y-1 text-slate-200">
-                  <p>• <strong>Для этой формы (Web OTA):</strong> выберите <code className="bg-indigo-900 px-1 rounded text-amber-300 font-bold">firmware.bin</code> (или <code className="bg-indigo-900 px-1 rounded text-amber-300">StairsEsp.ino.bin</code>).</p>
-                  <p>• <strong>Для прошивки по USB (flash_windows.bat):</strong> файл <code className="bg-indigo-900 px-1 rounded text-sky-300 font-bold">firmware.bin</code> с адресом <code className="text-emerald-300 font-mono">0x10000</code>.</p>
-                  <p>• <strong>С нуля (новая плата):</strong> 3 файла (<code className="text-slate-300">bootloader 0x1000</code>, <code className="text-slate-300">partitions 0x8000</code>, <code className="text-slate-300">firmware 0x10000</code>).</p>
+                  <p>• <strong>Через браузер (Web OTA):</strong> выберите <code className="bg-indigo-900 px-1 rounded text-amber-300 font-bold">firmware.bin</code> (или <code className="bg-indigo-900 px-1 rounded text-amber-300">StairsEsp.ino.bin</code>).</p>
+                  <p>• <strong>По USB (flash_windows.bat):</strong> файл <code className="bg-indigo-900 px-1 rounded text-sky-300 font-bold">firmware.bin</code> по смещению <code className="text-emerald-300 font-mono">0x10000</code>.</p>
                 </div>
               </div>
 
               {/* Local File Upload Form */}
-              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2.5">
+              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
                 <label className="text-xs font-semibold text-slate-300 block">
-                  📁 Ручная загрузка .bin файла с компьютера:
+                  📁 Ручная загрузка .bin файла с ПК:
                 </label>
                 <div className="flex items-center gap-2">
                   <input
@@ -535,37 +711,6 @@ export const DeviceWebPreview: React.FC<DeviceWebPreviewProps> = ({ config, onCo
                   className="w-full py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow flex items-center justify-center gap-1.5"
                 >
                   <Upload className="w-3.5 h-3.5" /> 🚀 Загрузить и прошить {uploadedFileName}
-                </button>
-              </div>
-
-              {/* GitHub Releases OTA */}
-              <div className="p-3 bg-purple-950/40 rounded-xl border border-purple-900/50 space-y-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Обновление с GitHub Releases:</span>
-                  <span className="font-mono text-purple-300 font-bold">v{config.firmwareVersion || '1.0.4'}</span>
-                </div>
-                <select
-                  value={config.firmwareVersion || '1.0.4'}
-                  onChange={(e) => onConfigUpdate && onConfigUpdate({ firmwareVersion: e.target.value })}
-                  className="w-full bg-slate-900 border border-purple-700/60 rounded-lg p-2 text-xs text-purple-200 font-mono"
-                >
-                  <option value="1.0.4">v1.0.4 (Последний релиз — Борисов, эффекты, мастер .bat)</option>
-                  <option value="1.0.3">v1.0.3 (Стабильная сборка)</option>
-                  <option value="1.0.2">v1.0.2 (Астрономический расчет заката)</option>
-                  <option value="1.0.0">v1.0.0 (Базовая версия)</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSaveBanner(`🚀 Запущено OTA-обновление прошивки с GitHub Releases... Скачивание firmware.bin (100%)...`);
-                    setTimeout(() => {
-                      setSaveBanner(`✅ Прошивка успешно обновлена до v${config.firmwareVersion || '1.0.4'}!`);
-                    }, 2500);
-                    setTimeout(() => setSaveBanner(null), 5500);
-                  }}
-                  className="w-full py-2 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-all shadow flex items-center justify-center gap-1.5"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> 🌐 Обновить по Wi-Fi с GitHub
                 </button>
               </div>
             </div>

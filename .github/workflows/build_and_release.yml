@@ -92,21 +92,69 @@ jobs:
           cd ..
           cp "esp32_stairs_flasher_${CURRENT_TAG}.zip" build_output/ 2>/dev/null || true
 
+      - name: Generate Release Notes and Changelog
+        id: changelog
+        run: |
+          mkdir -p build_output
+          
+          # Get current commit message and author
+          COMMIT_MSG=$(git log -1 --pretty=format:"%B")
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
+          COMMIT_HASH=$(git log -1 --pretty=format:"%h")
+          
+          # Get commit history since previous tag if available
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
+          echo "### 🚀 Релиз прошивки ESP32 \`${CURRENT_TAG}\`" > build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "- **Версия:** \`${CURRENT_TAG}\`" >> build_output/release_notes.md
+          echo "- **Номер сборки:** \`#${BUILD_NUMBER}\`" >> build_output/release_notes.md
+          echo "- **Коммит:** [\`${COMMIT_HASH}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) от **${COMMIT_AUTHOR}**" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "---" >> build_output/release_notes.md
+          echo "### 📝 Изменения и комментарии к этому релизу:" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          
+          # Print the current commit message formatted nicely
+          echo "\`\`\`" >> build_output/release_notes.md
+          echo "${COMMIT_MSG}" >> build_output/release_notes.md
+          echo "\`\`\`" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "#### 📋 Список коммитов с версии \`${PREV_TAG}\`:" >> build_output/release_notes.md
+            git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" ${PREV_TAG}..HEAD >> build_output/release_notes.md
+            echo "" >> build_output/release_notes.md
+          fi
+          
+          # If a local CHANGELOG.md exists, append its latest notes
+          if [ -f "CHANGELOG.md" ]; then
+            echo "" >> build_output/release_notes.md
+            echo "---" >> build_output/release_notes.md
+            echo "### 📄 Дополнительные заметки из CHANGELOG.md:" >> build_output/release_notes.md
+            cat CHANGELOG.md >> build_output/release_notes.md
+            echo "" >> build_output/release_notes.md
+          fi
+          
+          echo "" >> build_output/release_notes.md
+          echo "---" >> build_output/release_notes.md
+          echo "### ⚡ Как прошить контроллер:" >> build_output/release_notes.md
+          echo "1. Скачайте архив **\`esp32_stairs_flasher_${CURRENT_TAG}.zip\`** ниже из блока Assets." >> build_output/release_notes.md
+          echo "2. Распакуйте архив в любую папку." >> build_output/release_notes.md
+          echo "3. Подключите ESP32 по USB и запустите **\`flash_windows.bat\`**." >> build_output/release_notes.md
+          echo "4. Скрипт сам прошьёт плату и предложит настроить Wi-Fi и ступени прямо в терминале!" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "### 📟 Монитор порта:" >> build_output/release_notes.md
+          echo "Для просмотра логов и IP-адреса устройства запустите **\`terminal.bat\`**." >> build_output/release_notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
           tag_name: ${{ env.CURRENT_TAG }}
           name: "Smart Staircase Firmware ${{ env.CURRENT_TAG }}"
-          body: |
-            ### 🚀 Автоматическая сборка прошивки ESP32 (${{ env.CURRENT_TAG }})
-            - **Версия:** `${{ env.CURRENT_TAG }}`
-            - **Номер сборки:** `#${{ env.BUILD_NUMBER }}`
-            
-            ---
-            ### ⚡ Инструкция по прошивке:
-            1. **Скачайте архив `esp32_stairs_flasher_${{ env.CURRENT_TAG }}.zip`** ниже
-            2. Распакуйте и запустите **`flash_windows.bat`** (всё прошьется в 1 клик!)
+          body_path: build_output/release_notes.md
+          generate_release_notes: true
           draft: false
           prerelease: false
           files: |

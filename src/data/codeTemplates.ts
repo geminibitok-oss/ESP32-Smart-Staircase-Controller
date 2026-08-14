@@ -1433,6 +1433,12 @@ public:
         }
     }
 
+    void showOtaFlashingEffect() {
+        currentState = STATE_OTA_BUSY;
+        renderOtaAnimation();
+        FastLED.show();
+    }
+
 private:
     void lightUpStep(int stepIndex, CRGB color, uint8_t brightness) {
         if (stepIndex < 0 || stepIndex >= NUM_STEPS) return;

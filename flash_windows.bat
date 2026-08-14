@@ -184,7 +184,7 @@ set /p CFG_COLOR="9. Цвет подсветки R,G,B (например 255,180
 echo.
 echo [*] Поиск подключенного COM-порта ESP32...
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'SilentlyContinue'; $ports = [System.IO.Ports.SerialPort]::GetPortNames(); if ($ports.Count -eq 0) { Write-Host 'NO_PORT'; exit } $portName = $ports[0]; Write-Host $portName" > "%temp%\esp_port.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports = @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object); if ($ports.Count -eq 0) { [System.IO.File]::WriteAllText('%temp%\esp_port.txt', 'NO_PORT'); exit } $usbPorts = @($ports | Where-Object { $_ -ne 'COM1' }); $portName = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] }; [System.IO.File]::WriteAllText('%temp%\esp_port.txt', $portName)"
 set /p DETECTED_PORT=<"%temp%\esp_port.txt"
 del /f /q "%temp%\esp_port.txt" >nul 2>&1
 
@@ -204,7 +204,7 @@ echo [*] Отправка параметров в энергонезависим
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$portName = '%DETECTED_PORT%';" ^
     "try {" ^
-    "  $port = New-Object System.IO.Ports.SerialPort $portName, 115200, [System.IO.Ports.Parity]::None, 8, [System.IO.Ports.StopBits]::One;" ^
+    "  $port = New-Object System.IO.Ports.SerialPort($portName, 115200);" ^
     "  $port.DtrEnable = $false;" ^
     "  $port.RtsEnable = $false;" ^
     "  $port.Open();" ^
@@ -226,10 +226,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "  $port.WriteLine('REBOOT');" ^
     "  Start-Sleep -Milliseconds 500;" ^
     "  $port.Close();" ^
-    "  Write-Host 'SUCCESS';" ^
+    "  [System.IO.File]::WriteAllText('%temp%\esp_cfg_result.txt', 'SUCCESS');" ^
     "} catch {" ^
-    "  Write-Host ('ERROR: ' + $_.Exception.Message);" ^
-    "}" > "%temp%\esp_cfg_result.txt"
+    "  [System.IO.File]::WriteAllText('%temp%\esp_cfg_result.txt', ('ERROR: ' + $_.Exception.Message));" ^
+    "}"
 
 set /p CFG_RESULT=<"%temp%\esp_cfg_result.txt"
 del /f /q "%temp%\esp_cfg_result.txt" >nul 2>&1

@@ -222,7 +222,7 @@ set /p CFG_COLOR="9. Цвет подсветки R,G,B (например 255,180
 echo.
 echo [*] Поиск подключенного COM-порта ESP32...
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'SilentlyContinue'; $ports = [System.IO.Ports.SerialPort]::GetPortNames(); if ($ports.Count -eq 0) { Write-Host 'NO_PORT'; exit } $portName = $ports[0]; Write-Host $portName" > "%temp%\\esp_port.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports = @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object); if ($ports.Count -eq 0) { [System.IO.File]::WriteAllText('%temp%\\esp_port.txt', 'NO_PORT'); exit } $usbPorts = @($ports | Where-Object { $_ -ne 'COM1' }); $portName = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] }; [System.IO.File]::WriteAllText('%temp%\\esp_port.txt', $portName)"
 set /p DETECTED_PORT=<"%temp%\\esp_port.txt"
 del /f /q "%temp%\\esp_port.txt" >nul 2>&1
 
@@ -242,7 +242,7 @@ echo [*] Отправка параметров в энергонезависим
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$portName = '%DETECTED_PORT%';" ^
     "try {" ^
-    "  $port = New-Object System.IO.Ports.SerialPort $portName, 115200, [System.IO.Ports.Parity]::None, 8, [System.IO.Ports.StopBits]::One;" ^
+    "  $port = New-Object System.IO.Ports.SerialPort($portName, 115200);" ^
     "  $port.DtrEnable = $false;" ^
     "  $port.RtsEnable = $false;" ^
     "  $port.Open();" ^
@@ -264,10 +264,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "  $port.WriteLine('REBOOT');" ^
     "  Start-Sleep -Milliseconds 500;" ^
     "  $port.Close();" ^
-    "  Write-Host 'SUCCESS';" ^
+    "  [System.IO.File]::WriteAllText('%temp%\\esp_cfg_result.txt', 'SUCCESS');" ^
     "} catch {" ^
-    "  Write-Host ('ERROR: ' + $_.Exception.Message);" ^
-    "}" > "%temp%\\esp_cfg_result.txt"
+    "  [System.IO.File]::WriteAllText('%temp%\\esp_cfg_result.txt', ('ERROR: ' + $_.Exception.Message));" ^
+    "}"
 
 set /p CFG_RESULT=<"%temp%\\esp_cfg_result.txt"
 del /f /q "%temp%\\esp_cfg_result.txt" >nul 2>&1
@@ -359,25 +359,25 @@ echo.
 echo [*] Поиск доступных COM-портов...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$ports = [System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object;" ^
-    "if ($ports.Count -eq 0) { 'NO_PORTS'; exit }" ^
-    "$usbPorts = $ports | Where-Object { $_ -ne 'COM1' };" ^
-    "$defaultPort = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] };" ^
+    "$rawPorts = [System.IO.Ports.SerialPort]::GetPortNames();" ^
+    "if (-not $rawPorts -or $rawPorts.Length -eq 0) { [System.IO.File]::WriteAllText('%temp%\\esp_ports.txt', 'NO_PORTS'); exit }" ^
+    "$ports = @($rawPorts | Sort-Object);" ^
+    "$usbPorts = @($ports | Where-Object { $_ -ne 'COM1' });" ^
+    "$def = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] };" ^
     "$i = 1;" ^
     "foreach ($p in $ports) {" ^
-    "  $rec = if ($p -eq $defaultPort) { ' (Рекомендуется)' } else { '' };" ^
+    "  $rec = if ($p -eq $def) { ' (Рекомендуется)' } else { '' };" ^
     "  Write-Host ('  [' + $i + '] ' + $p + $rec);" ^
     "  $i++;" ^
     "}" ^
-    "$defaultPort | Out-File -Encoding ascii '%temp%\\esp_def_port.txt';" ^
-    "($ports -join ',') | Out-File -Encoding ascii '%temp%\\esp_all_ports.txt';"
+    "[System.IO.File]::WriteAllText('%temp%\\esp_ports.txt', ($def + '|' + ($ports -join ',')));"
 
-if exist "%temp%\\esp_def_port.txt" (
-    set /p DEFAULT_PORT=<"%temp%\\esp_def_port.txt"
-    del /f /q "%temp%\\esp_def_port.txt" >nul 2>&1
+if exist "%temp%\\esp_ports.txt" (
+    set /p PORTS_INFO=<"%temp%\\esp_ports.txt"
+    del /f /q "%temp%\\esp_ports.txt" >nul 2>&1
 )
 
-if "%DEFAULT_PORT%"=="NO_PORTS" (
+if "%PORTS_INFO%"=="NO_PORTS" (
     echo.
     echo ❌ [ОШИБКА] Ни одного COM-порта не обнаружено!
     echo Убедитесь, что ESP32 подключена по USB-кабелю и установлены драйверы CH340 / CP2102.
@@ -386,10 +386,12 @@ if "%DEFAULT_PORT%"=="NO_PORTS" (
     exit /b 1
 )
 
-if exist "%temp%\\esp_all_ports.txt" (
-    set /p ALL_PORTS=<"%temp%\\esp_all_ports.txt"
-    del /f /q "%temp%\\esp_all_ports.txt" >nul 2>&1
+for /f "tokens=1,2 delims=|" %%a in ("%PORTS_INFO%") do (
+    set "DEFAULT_PORT=%%a"
+    set "ALL_PORTS=%%b"
 )
+
+if "%DEFAULT_PORT%"=="" set DEFAULT_PORT=COM8
 
 echo.
 echo Нажмите ENTER для выбора [%DEFAULT_PORT%] или введите номер/имя порта:
@@ -399,27 +401,28 @@ set /p USER_INPUT="Выбор [%DEFAULT_PORT%]: "
 set "CHOSEN_PORT=%DEFAULT_PORT%"
 if not "%USER_INPUT%"=="" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "$inputVal = '%USER_INPUT%'.Trim();" ^
-        "$all = '%ALL_PORTS%'.Split(',');" ^
-        "if ($inputVal -match '^\\d+$') {" ^
-        "  $idx = [int]$inputVal - 1;" ^
-        "  if ($idx -ge 0 -and $idx -lt $all.Count) { $all[$idx] } else { $all[0] }" ^
+        "$in = '%USER_INPUT%'.Trim();" ^
+        "$all = @('%ALL_PORTS%'.Split(','));" ^
+        "if ($in -match '^\\d+$') {" ^
+        "  $idx = [int]$in - 1;" ^
+        "  if ($idx -ge 0 -and $idx -lt $all.Count) { $res = $all[$idx] } else { $res = ('COM' + $in) }" ^
         "} else {" ^
-        "  if (-not $inputVal.ToUpper().StartsWith('COM')) { 'COM' + $inputVal } else { $inputVal.ToUpper() }" ^
-        "}" > "%temp%\\esp_chosen_port.txt"
-    set /p CHOSEN_PORT=<"%temp%\\esp_chosen_port.txt"
-    del /f /q "%temp%\\esp_chosen_port.txt" >nul 2>&1
+        "  if (-not $in.ToUpper().StartsWith('COM')) { $res = 'COM' + $in } else { $res = $in.ToUpper() }" ^
+        "}" ^
+        "[System.IO.File]::WriteAllText('%temp%\\esp_sel.txt', $res);"
+    set /p CHOSEN_PORT=<"%temp%\\esp_sel.txt"
+    del /f /q "%temp%\\esp_sel.txt" >nul 2>&1
 )
 
 echo.
 echo ======================================================================
-echo  🔌 Подключение к %CHOSEN_PORT% на скорости 115200 бод...
-echo  💡 Полезные команды (вводите в окно консоли):
-echo     STATUS           - Узнать IP-адрес, статус Wi-Fi и ступени
-echo     WIFI=SSID,PASS   - Настроить подключение к домашнему Wi-Fi
-echo     STEPS=16         - Изменить число ступеней (1-32)
-echo     REBOOT           - Перезагрузить плату
-echo     HELP             - Список всех команд
+echo  🔌 Подключение к %CHOSEN_PORT% (115200 baud)...
+echo  💡 Чтобы отправить команду, просто введите её и нажмите ENTER.
+echo     STATUS           - Узнать текущий IP-адрес и состояние
+echo     WIFI=SSID,PASS   - Настроить домашний Wi-Fi
+echo     STEPS=16         - Изменить число ступеней
+echo     REBOOT           - Перезагрузить контроллер
+echo  🛑 Для выхода нажмите Ctrl+C
 echo ======================================================================
 echo.
 
@@ -427,7 +430,7 @@ echo.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$portName = '%CHOSEN_PORT%';" ^
     "try {" ^
-    "  $port = New-Object System.IO.Ports.SerialPort $portName, 115200, [System.IO.Ports.Parity]::None, 8, [System.IO.Ports.StopBits]::One;" ^
+    "  $port = New-Object System.IO.Ports.SerialPort($portName, 115200);" ^
     "  $port.DtrEnable = $false;" ^
     "  $port.RtsEnable = $false;" ^
     "  $port.ReadTimeout = 50;" ^
@@ -578,6 +581,57 @@ jobs:
           cd ..
           cp "esp32_stairs_flasher_\${CURRENT_TAG}.zip" build_output/
 
+      - name: Generate Release Notes and Changelog
+        id: changelog
+        run: |
+          mkdir -p build_output
+          
+          # Get commit info
+          COMMIT_MSG=$(git log -1 --pretty=format:"%B")
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
+          COMMIT_HASH=$(git log -1 --pretty=format:"%h")
+          
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
+          echo "### 🚀 Релиз прошивки ESP32 \`\${CURRENT_TAG}\`" > build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "- **Версия:** \`\${CURRENT_TAG}\`" >> build_output/release_notes.md
+          echo "- **Номер сборки:** \`#\${BUILD_NUMBER}\`" >> build_output/release_notes.md
+          echo "- **Автор коммита:** **\${COMMIT_AUTHOR}** ([\`\${COMMIT_HASH}\`](https://github.com/\${{ github.repository }}/commit/\${{ github.sha }}))" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "---" >> build_output/release_notes.md
+          echo "### 📝 Что нового в этом обновлении:" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "\`\`\`" >> build_output/release_notes.md
+          echo "\${COMMIT_MSG}" >> build_output/release_notes.md
+          echo "\`\`\`" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "#### 📋 Список изменений с версии \`\${PREV_TAG}\`:" >> build_output/release_notes.md
+            git log --pretty=format:"- %s ([\`%h\`](https://github.com/\${{ github.repository }}/commit/%H))" \${PREV_TAG}..HEAD >> build_output/release_notes.md
+            echo "" >> build_output/release_notes.md
+          fi
+          
+          if [ -f "CHANGELOG.md" ]; then
+            echo "" >> build_output/release_notes.md
+            echo "---" >> build_output/release_notes.md
+            echo "### 📄 Заметки из CHANGELOG.md:" >> build_output/release_notes.md
+            cat CHANGELOG.md >> build_output/release_notes.md
+            echo "" >> build_output/release_notes.md
+          fi
+          
+          echo "" >> build_output/release_notes.md
+          echo "---" >> build_output/release_notes.md
+          echo "### ⚡ Как прошить контроллер:" >> build_output/release_notes.md
+          echo "1. Скачайте архив **\`esp32_stairs_flasher_\${CURRENT_TAG}.zip\`** ниже из блока Assets." >> build_output/release_notes.md
+          echo "2. Распакуйте архив в любую папку." >> build_output/release_notes.md
+          echo "3. Подключите ESP32 по USB и запустите **\`flash_windows.bat\`**." >> build_output/release_notes.md
+          echo "4. Скрипт прошьёт плату и запустит удобный мастер настройки прямо в терминале!" >> build_output/release_notes.md
+          echo "" >> build_output/release_notes.md
+          echo "### 📟 Монитор порта:" >> build_output/release_notes.md
+          echo "Для просмотра логов и IP-адреса устройства запустите **\`terminal.bat\`**." >> build_output/release_notes.md
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -590,20 +644,8 @@ jobs:
         with:
           tag_name: \${{ env.CURRENT_TAG }}
           name: "Smart Staircase Firmware \${{ env.CURRENT_TAG }}"
-          body: |
-            ### 🚀 Автоматическая сборка прошивки ESP32 (\${{ env.CURRENT_TAG }})
-            - **Версия:** \`\${{ env.CURRENT_TAG }}\`
-            - **Номер сборки:** \`#\${{ env.BUILD_NUMBER }}\`
-            - **Коммит:** \`\${{ github.sha }}\`
-            
-            ---
-            ### ⚡ Инструкция по прошивке:
-            1. **📦 Для первой прошивки по USB (Windows в 1 клик):**
-               - Скачайте архив **\`esp32_stairs_flasher_\${{ env.CURRENT_TAG }}.zip\`**
-               - Распакуйте и запустите **\`flash_windows.bat\`** (\`esptool.exe\` и все \`.bin\` уже внутри!)
-               - Для вывода логов Serial порта запустите **\`terminal.bat\`**
-            2. **📶 Обновление по воздуху (Wi-Fi OTA):**
-               - Работающий ESP32 автоматически обнаружит новый релиз и обновится сам!
+          body_path: build_output/release_notes.md
+          generate_release_notes: true
           draft: false
           prerelease: false
           files: |

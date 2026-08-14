@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Temporary binaries and Archives (should be built by CI or downloaded)
+esptool.exe
+esptool.zip
+*.bin.gz
+.pio/
+.vscode/

@@ -1,11 +1,22 @@
-<div align="center">
+# StairFlow ESP32 - Smart Staircase Controller 🌟
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Умный контроллер автоматической подсветки лестницы на базе **ESP32**, адресной ленты **WS2812B**, двух датчиков движения (PIR / Microwave Radar), астрономического расчёта времени восхода/заката и автоматического обновления по воздуху (**GitHub Releases OTA**).
 
-  <h1>Built with AI Studio</h2>
+---
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## ⚡ Основные возможности:
+- 🌈 **Плавные анимации волны:** пошаговое включение и затухание по направлению движения (снизу вверх / сверху вниз).
+- ☀️ **Астрономический калькулятор (Solar Scheduler):** точный расчёт заката и рассвета по координатам без внешних API.
+- 🌙 **Ночной дежурный режим (Standby):** мягкая подсветка первой и последней ступеней или всех ступеней.
+- 📶 **Встроенный веб-портал:** управление цветом, запуск анимаций и ручная прошивка через браузер (порт 80).
+- 🚀 **GitHub CI/CD Auto-OTA:** автоматическая сборка прошивки в GitHub Actions и автообновление ESP32 по Wi-Fi.
+- 📦 **Прошивка в 1 клик для Windows:** готовый скрипт `flash_windows.bat` со встроенным `esptool.exe`.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+---
 
-</div>
+## 📂 Структура проекта:
+- `StairsEsp/` — исходный код скетча для Arduino IDE / Arduino CLI.
+- `.github/workflows/` — скрипт автоматической сборки релизов в GitHub Actions.
+- `flash_windows.bat` — скрипт прошивки по USB для Windows.
+- `terminal.bat` — монитор Serial-порта для отладки.
+- `platformio.ini` — конфигурация для сборки в VS Code / PlatformIO.

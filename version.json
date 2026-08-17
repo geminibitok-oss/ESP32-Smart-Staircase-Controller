@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
-  "build": 1,
-  "release_date": "2026-08-14T11:00:00Z",
-  "bin_url": "https://github.com/geminibitok-oss/ESP32-Smart-Staircase-Controller/releases/download/v1.0.1/firmware.bin",
-  "changelog": "Initial Release: WS2812B Animations, Dual Motion Sensors, Solar Calculations, Web Portal & OTA"
+  "version": "1.0.9",
+  "build": 9,
+  "release_date": "2026-08-14T21:00:00Z",
+  "bin_url": "https://github.com/geminibitok-oss/ESP32-Smart-Staircase-Controller/releases/latest/download/firmware.bin",
+  "changelog": "v1.0.9: WS2812B Animations, Dynamic GPIOs, Dual Motion Sensors, Solar Calculations, Web Portal & OTA"
 }

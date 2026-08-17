@@ -43,6 +43,15 @@ void onStartOta() {
     ledEngine.setOtaMode(true);
 }
 
+void onOtaFailed(String err) {
+    Serial.printf("[SYSTEM] OTA Flash Failed: %s -> Restoring normal LED mode\n", err.c_str());
+    ledEngine.resetOtaMode();
+}
+
+void onOtaSuccess() {
+    Serial.println("[SYSTEM] OTA Flash Succeeded! Restarting ESP32...");
+}
+
 void onColorChanged(uint8_t r, uint8_t g, uint8_t b) {
     Serial.printf("[SYSTEM] New Color Set: R=%d G=%d B=%d\n", r, g, b);
     ledEngine.setColor(r, g, b);
@@ -73,7 +82,10 @@ void loadDynamicSettings() {
     pinLdr = sysPrefs.getUChar("pin_ldr", PIN_LDR_SENSOR);
     sensorActiveHigh = sysPrefs.getUChar("sensor_high", 1);
     sensorPullMode = sysPrefs.getUChar("pull_mode", 0);
+    uint8_t autoOta = sysPrefs.getUChar("auto_ota", DEFAULT_AUTO_OTA);
     sysPrefs.end();
+
+    otaEngine.autoOtaEnabled = (autoOta != 0);
 
     if (steps > 0 && steps <= MAX_STEPS) ledEngine.numSteps = steps;
     if (ledsStep > 0 && ledsStep <= MAX_LEDS_PER_STEP) ledEngine.ledsPerStep = ledsStep;
@@ -145,9 +157,7 @@ String getSystemStatusJson() {
 
 bool onTriggerGithubOta(String binUrl) {
     Serial.println("[OTA] Triggering GitHub OTA update from Web UI: " + binUrl);
-    return otaEngine.triggerCustomUpdate(binUrl, []() {
-        ledEngine.showOtaFlashingEffect();
-    });
+    return otaEngine.triggerCustomUpdate(binUrl, onStartOta, onOtaFailed, onOtaSuccess);
 }
 
 String getOtaStatusJson() {
@@ -219,7 +229,10 @@ void handleSerialCommands() {
             Serial.println("  STANDBY=<mode>,<0-255>   - Standby mode (0-3) and brightness");
             Serial.println("  COLOR=<R>,<G>,<B>        - Strip color (e.g. COLOR=255,180,80)");
             Serial.println("  PINS=<led>,<bot>,<top>   - Dynamic GPIO pin assignment");
+            Serial.println("  SENSORS=<bot>,<top>      - Set sensor GPIO pins (e.g. SENSORS=22,23)");
+            Serial.println("  BOT=<gpio> / TOP=<gpio>  - Set individual sensor pin");
             Serial.println("  TRIGGER=<UP|DOWN>        - Test trigger stairs");
+            Serial.println("  OTA=<ON|OFF|CHECK>       - Control GitHub Auto-OTA updates");
             Serial.println("  STATUS                   - Print current configuration");
             Serial.println("  REBOOT                   - Restart controller");
             Serial.println("--------------------------------------\n");
@@ -245,6 +258,46 @@ void handleSerialCommands() {
                 configureSensorPinModes();
                 Serial.printf("[CONFIG] Pins updated: LED=%d, BOT=%d, TOP=%d. Saved!\n", pLed, pBot, pTop);
             }
+            return;
+        }
+
+        if (line.startsWith("SENSORS=")) {
+            String val = line.substring(8);
+            int c1 = val.indexOf(',');
+            if (c1 != -1) {
+                int pBot = val.substring(0, c1).toInt();
+                int pTop = val.substring(c1 + 1).toInt();
+                sysPrefs.begin("stairs_cfg", false);
+                sysPrefs.putUChar("pin_bot", (uint8_t)pBot);
+                sysPrefs.putUChar("pin_top", (uint8_t)pTop);
+                sysPrefs.end();
+                pinBottomPir = pBot;
+                pinTopPir = pTop;
+                configureSensorPinModes();
+                Serial.printf("[CONFIG] Sensors updated: BOTTOM=GPIO %d, TOP=GPIO %d. Saved!\n", pBot, pTop);
+            }
+            return;
+        }
+
+        if (line.startsWith("BOT=")) {
+            int pBot = line.substring(4).toInt();
+            sysPrefs.begin("stairs_cfg", false);
+            sysPrefs.putUChar("pin_bot", (uint8_t)pBot);
+            sysPrefs.end();
+            pinBottomPir = pBot;
+            configureSensorPinModes();
+            Serial.printf("[CONFIG] Bottom sensor set to GPIO %d. Saved!\n", pBot);
+            return;
+        }
+
+        if (line.startsWith("TOP=")) {
+            int pTop = line.substring(4).toInt();
+            sysPrefs.begin("stairs_cfg", false);
+            sysPrefs.putUChar("pin_top", (uint8_t)pTop);
+            sysPrefs.end();
+            pinTopPir = pTop;
+            configureSensorPinModes();
+            Serial.printf("[CONFIG] Top sensor set to GPIO %d. Saved!\n", pTop);
             return;
         }
 
@@ -380,6 +433,28 @@ void handleSerialCommands() {
             return;
         }
 
+        if (line.startsWith("OTA=")) {
+            String v = line.substring(4);
+            v.toUpperCase();
+            if (v == "ON" || v == "1") {
+                otaEngine.autoOtaEnabled = true;
+                sysPrefs.begin("stairs_cfg", false);
+                sysPrefs.putUChar("auto_ota", 1);
+                sysPrefs.end();
+                Serial.println("[CONFIG] Auto-OTA is now ENABLED.");
+            } else if (v == "OFF" || v == "0") {
+                otaEngine.autoOtaEnabled = false;
+                sysPrefs.begin("stairs_cfg", false);
+                sysPrefs.putUChar("auto_ota", 0);
+                sysPrefs.end();
+                Serial.println("[CONFIG] Auto-OTA is now DISABLED.");
+            } else if (v == "CHECK") {
+                Serial.println("[OTA] Manual update check initiated via Serial...");
+                otaEngine.checkForUpdate(onStartOta, onOtaFailed, onOtaSuccess);
+            }
+            return;
+        }
+
         Serial.println("[CMD] Unknown command: " + line + ". Type HELP for instructions.");
     }
 }
@@ -418,7 +493,7 @@ void loop() {
     }
 
     // 4. Background GitHub Auto-OTA Handler
-    otaEngine.handle(onStartOta);
+    otaEngine.handle(onStartOta, onOtaFailed, onOtaSuccess);
 
     delay(10);
 }

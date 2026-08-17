@@ -162,6 +162,9 @@ public:
             if (request->hasParam("pull_mode", true)) {
                 prefs.putUChar("pull_mode", (uint8_t)request->getParam("pull_mode", true)->value().toInt());
             }
+            if (request->hasParam("auto_ota", true)) {
+                prefs.putUChar("auto_ota", (uint8_t)request->getParam("auto_ota", true)->value().toInt());
+            }
 
             if (onConfigChange) onConfigChange();
 

@@ -17,9 +17,9 @@
 #define TOTAL_LEDS         (NUM_STEPS * LEDS_PER_STEP)
 
 // GPIO Pins (ESP32 DevKit V1)
-#define PIN_LED_DATA       18       // Output to WS2812B Data In
-#define PIN_BOTTOM_PIR     19       // Bottom Motion Sensor (PIR/Radar)
-#define PIN_TOP_PIR        21       // Top Motion Sensor (PIR/Radar)
+#define PIN_LED_DATA       4        // Output to WS2812B Data In
+#define PIN_BOTTOM_PIR     22       // Bottom Motion Sensor (PIR/Radar)
+#define PIN_TOP_PIR        23       // Top Motion Sensor (PIR/Radar)
 #define PIN_LDR_SENSOR     34       // Optional Analog Ambient Light Sensor
 
 // ================= ANIMATION & LIGHTING =================
@@ -47,12 +47,18 @@
 #define AP_SSID_NAME       "ESP32-Staircase-Setup"
 #define AP_PASSWORD_NAME   "12345678"
 
+#include "version.h"
+
 // GitHub Auto-OTA Repository
 #define GITHUB_USER        "geminibitok-oss"
 #define GITHUB_REPO        "ESP32-Smart-Staircase-Controller"
 #define GITHUB_BRANCH      "main"
 #define OTA_CHECK_MINUTES  60       // Check GitHub for new releases every X min
+#define DEFAULT_AUTO_OTA   1        // Auto-OTA enabled by default (1=On, 0=Off)
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION   "1.0.0"
+#define FIRMWARE_VERSION   "1.0.9"
+#endif
+#ifndef FIRMWARE_BUILD
+#define FIRMWARE_BUILD     9
 #endif

@@ -35,9 +35,9 @@ export default function App() {
   const [config, setConfig] = useState<StaircaseConfig>({
     stepCount: 14,
     ledsPerStep: 20,
-    ledPin: 16,
-    bottomSensorPin: 19,
-    topSensorPin: 18,
+    ledPin: 4,
+    bottomSensorPin: 22,
+    topSensorPin: 23,
     ldrSensorPin: 34,
     useLdr: false,
 

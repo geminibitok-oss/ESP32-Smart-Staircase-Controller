@@ -254,7 +254,13 @@ public:
             currentState = STATE_OTA_BUSY;
         } else {
             currentState = STATE_IDLE_DAY;
+            FastLED.clear(true);
         }
+    }
+
+    void resetOtaMode() {
+        currentState = STATE_IDLE_DAY;
+        FastLED.clear(true);
     }
 
     void showOtaFlashingEffect() {

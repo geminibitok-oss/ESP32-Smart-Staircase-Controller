@@ -1430,7 +1430,13 @@ public:
             currentState = STATE_OTA_BUSY;
         } else {
             currentState = STATE_IDLE_DAY;
+            FastLED.clear(true);
         }
+    }
+
+    void resetOtaMode() {
+        currentState = STATE_IDLE_DAY;
+        FastLED.clear(true);
     }
 
     void showOtaFlashingEffect() {
@@ -1508,11 +1514,35 @@ public:
     uint8_t progressPercent = 0;
     String statusMessage = "idle";
     String lastError = "";
+    bool autoOtaEnabled = true;
+
+    static bool isRemoteNewer(const String& remoteVer, int remoteBuild, const String& localVer, int localBuild) {
+        if (remoteVer.length() == 0) return false;
+
+        int rMajor = 0, rMinor = 0, rPatch = 0;
+        int lMajor = 0, lMinor = 0, lPatch = 0;
+
+        sscanf(remoteVer.c_str(), "%d.%d.%d", &rMajor, &rMinor, &rPatch);
+        sscanf(localVer.c_str(), "%d.%d.%d", &lMajor, &lMinor, &lPatch);
+
+        if (rMajor > lMajor) return true;
+        if (rMajor < lMajor) return false;
+
+        if (rMinor > lMinor) return true;
+        if (rMinor < lMinor) return false;
+
+        if (rPatch > lPatch) return true;
+        if (rPatch < lPatch) return false;
+
+        if (remoteBuild > localBuild) return true;
+
+        return false;
+    }
 
     void begin() {
         Serial.println("[OTA] GitHub Auto-OTA Manager initialized.");
         Serial.printf("[OTA] Target Repository: %s/%s on branch '%s'\\n", GITHUB_USER, GITHUB_REPO, GITHUB_BRANCH);
-        Serial.printf("[OTA] Current Firmware Version: %s\\n", FIRMWARE_VERSION);
+        Serial.printf("[OTA] Current Firmware Version: %s (Build #%d)\\n", FIRMWARE_VERSION, FIRMWARE_BUILD);
     }
 
     String getOtaStatusJson() {
@@ -1522,12 +1552,13 @@ public:
         doc["status"] = statusMessage;
         doc["error"] = lastError;
         doc["current_version"] = FIRMWARE_VERSION;
+        doc["auto_ota"] = autoOtaEnabled;
         String out;
         serializeJson(doc, out);
         return out;
     }
 
-    bool triggerCustomUpdate(String binUrl, void (*onStartUpdate)() = nullptr) {
+    bool triggerCustomUpdate(String binUrl, void (*onStartUpdate)() = nullptr, void (*onUpdateFailed)(String err) = nullptr, void (*onUpdateSuccess)() = nullptr) {
         if (isUpdating) {
             Serial.println("[OTA] Update already in progress.");
             return false;
@@ -1538,24 +1569,20 @@ public:
             return false;
         }
         Serial.println("[OTA] 🚀 Manual OTA Triggered for URL: " + binUrl);
-        if (onStartUpdate) onStartUpdate();
-        return performOtaUpdate(binUrl);
+        return performOtaUpdate(binUrl, onStartUpdate, onUpdateFailed, onUpdateSuccess);
     }
 
-    /**
-     * Check if it's time to query GitHub for new releases
-     */
-    void handle(void (*onStartUpdate)()) {
-        if (WiFi.status() != WL_CONNECTED || isUpdating) return;
+    void handle(void (*onStartUpdate)() = nullptr, void (*onUpdateFailed)(String err) = nullptr, void (*onUpdateSuccess)() = nullptr) {
+        if (!autoOtaEnabled || WiFi.status() != WL_CONNECTED || isUpdating) return;
 
         unsigned long now = millis();
         if (lastCheckTime == 0 || (now - lastCheckTime >= (OTA_CHECK_MINUTES * 60 * 1000UL))) {
             lastCheckTime = now;
-            checkForUpdate(onStartUpdate);
+            checkForUpdate(onStartUpdate, onUpdateFailed, onUpdateSuccess);
         }
     }
 
-    void checkForUpdate(void (*onStartUpdate)()) {
+    void checkForUpdate(void (*onStartUpdate)() = nullptr, void (*onUpdateFailed)(String err) = nullptr, void (*onUpdateSuccess)() = nullptr) {
         Serial.println("[OTA] Checking GitHub for new firmware version...");
 
         WiFiClientSecure client;
@@ -1581,14 +1608,13 @@ public:
                 int remoteBuild = doc["build"].as<int>();
                 String binUrl = doc["bin_url"].as<String>();
 
-                Serial.printf("[OTA] Local: %s | Remote: %s (Build #%d)\\n", FIRMWARE_VERSION, remoteVersion.c_str(), remoteBuild);
+                Serial.printf("[OTA] Local: %s (Build #%d) | Remote: %s (Build #%d)\\n", FIRMWARE_VERSION, FIRMWARE_BUILD, remoteVersion.c_str(), remoteBuild);
 
-                if (remoteVersion != FIRMWARE_VERSION && binUrl.length() > 0) {
+                if (isRemoteNewer(remoteVersion, remoteBuild, FIRMWARE_VERSION, FIRMWARE_BUILD) && binUrl.length() > 0) {
                     Serial.println("[OTA] ⚡ NEW FIRMWARE DETECTED! Initiating over-the-air flash...");
-                    if (onStartUpdate) onStartUpdate();
-                    performOtaUpdate(binUrl);
+                    performOtaUpdate(binUrl, onStartUpdate, onUpdateFailed, onUpdateSuccess);
                 } else {
-                    Serial.println("[OTA] Firmware is already up to date.");
+                    Serial.println("[OTA] Firmware is up to date. No update needed.");
                 }
             } else {
                 Serial.println("[OTA] Failed to parse version.json: " + String(error.c_str()));
@@ -1600,7 +1626,8 @@ public:
     }
 
 private:
-    bool performOtaUpdate(String binUrl) {
+    bool performOtaUpdate(String binUrl, void (*onStartUpdate)() = nullptr, void (*onUpdateFailed)(String err) = nullptr, void (*onUpdateSuccess)() = nullptr) {
+        if (onStartUpdate) onStartUpdate();
         isUpdating = true;
         progressPercent = 10;
         statusMessage = "downloading";
@@ -1624,20 +1651,24 @@ private:
                 progressPercent = 0;
                 Serial.printf("[OTA] Update FAILED! Error (%d): %s\\n", httpUpdate.getLastError(), lastError.c_str());
                 isUpdating = false;
+                if (onUpdateFailed) onUpdateFailed(lastError);
                 return false;
             case HTTP_UPDATE_NO_UPDATES:
                 statusMessage = "no_updates";
                 progressPercent = 100;
                 Serial.println("[OTA] No updates available.");
                 isUpdating = false;
+                if (onUpdateFailed) onUpdateFailed("No updates available");
                 return false;
             case HTTP_UPDATE_OK:
                 statusMessage = "success";
                 progressPercent = 100;
                 Serial.println("[OTA] UPDATE SUCCESSFUL! Rebooting ESP32 into new firmware...");
+                if (onUpdateSuccess) onUpdateSuccess();
                 return true;
         }
         isUpdating = false;
+        if (onUpdateFailed) onUpdateFailed("Unknown error");
         return false;
     }
 };

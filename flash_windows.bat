@@ -22,23 +22,25 @@ echo   [1] ⚡ Прошить текущую локальную версию (А
 echo   [2] 📁 Выбрать локальный .bin файл на компьютере (Вручную / Drag-and-Drop)
 echo   [3] 🌐 Выбрать и скачать версию прошивки из GitHub Releases
 echo   [4] 📶 Беспроводное OTA-обновление по Wi-Fi (без USB кабеля)
-echo   [5] ⚙️  Мастер настройки параметров лестницы через USB (Wi-Fi, LED, Пины)
-echo   [6] 📟 Открыть Монитор Serial Порта (Live Логи 115200 бод)
-echo   [7] 🚪 Выход
+echo   [5] 📶 НАСТРОЙКА ТОЛЬКО WI-FI (SSID и пароль через USB за 5 секунд)
+echo   [6] ⚙️  Полный мастер настройки параметров (LED, Пины, Яркость, Ступени)
+echo   [7] 📟 Открыть Монитор Serial Порта (Live Логи 115200 бод)
+echo   [8] 🚪 Выход
 echo.
 set "MENU_CHOICE="
-set /p MENU_CHOICE="Введите номер пункта (1-7) [По умолчанию 1]: "
+set /p MENU_CHOICE="Введите номер пункта (1-8) [По умолчанию 1]: "
 if "%MENU_CHOICE%"=="" set MENU_CHOICE=1
 
 if "%MENU_CHOICE%"=="1" goto FLASH_LOCAL_AUTO
 if "%MENU_CHOICE%"=="2" goto FLASH_LOCAL_MANUAL
 if "%MENU_CHOICE%"=="3" goto GITHUB_RELEASE_PICKER
 if "%MENU_CHOICE%"=="4" goto OTA_WIFI_UPDATE
-if "%MENU_CHOICE%"=="5" goto USB_SETUP_WIZARD
-if "%MENU_CHOICE%"=="6" goto OPEN_SERIAL_TERMINAL
-if "%MENU_CHOICE%"=="7" goto EXIT_SCRIPT
+if "%MENU_CHOICE%"=="5" goto USB_WIFI_ONLY
+if "%MENU_CHOICE%"=="6" goto USB_SETUP_WIZARD
+if "%MENU_CHOICE%"=="7" goto OPEN_SERIAL_TERMINAL
+if "%MENU_CHOICE%"=="8" goto EXIT_SCRIPT
 
-echo [!] Неверный ввод. Пожалуйста, введите цифру от 1 до 7.
+echo [!] Неверный ввод. Пожалуйста, введите цифру от 1 до 8.
 timeout /t 2 >nul
 goto MAIN_MENU
 
@@ -438,7 +440,91 @@ echo [OK] esptool.exe готов к работе.
 exit /b 0
 
 :: -------------------------------------------------------------
-:: Mode 5: USB Configuration Wizard (Sends commands over COM port)
+:: Mode 5: Dedicated Wi-Fi Only Setup (Fast 5-second setup)
+:: -------------------------------------------------------------
+:USB_WIFI_ONLY
+cls
+echo ======================================================================
+echo  📶 [Режим 5] Настройка только Wi-Fi через USB
+echo ======================================================================
+echo.
+echo Введите данные вашей домашней сети Wi-Fi (2.4 GHz):
+echo.
+
+set "CFG_WIFI_SSID="
+set /p CFG_WIFI_SSID="1. Имя домашнего Wi-Fi (SSID): "
+
+if "%CFG_WIFI_SSID%"=="" (
+    echo [!] Имя сети не может быть пустым. Возврат в меню...
+    timeout /t 2 >nul
+    goto MAIN_MENU
+)
+
+set "CFG_WIFI_PASS="
+set /p CFG_WIFI_PASS="2. Пароль от Wi-Fi: "
+
+echo.
+echo [*] Поиск подключенного COM-порта ESP32...
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports = @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object); if ($ports.Count -eq 0) { [System.IO.File]::WriteAllText('%temp%\esp_port.txt', 'NO_PORT'); exit } $usbPorts = @($ports | Where-Object { $_ -ne 'COM1' }); $portName = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] }; [System.IO.File]::WriteAllText('%temp%\esp_port.txt', $portName)"
+set /p DETECTED_PORT=<"%temp%\esp_port.txt"
+del /f /q "%temp%\esp_port.txt" >nul 2>&1
+
+if "%DETECTED_PORT%"=="NO_PORT" (
+    echo [!] COM-порт не определен автоматически.
+    set /p DETECTED_PORT="Укажите номер COM-порта вручную (например COM3): "
+)
+
+if "%DETECTED_PORT%"=="" (
+    echo [ERROR] Не удалось определить COM-порт.
+    goto MAIN_MENU
+)
+
+echo [OK] Выбран порт: %DETECTED_PORT%
+echo [*] Отправка Wi-Fi настроек в NVS память ESP32...
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$portName = '%DETECTED_PORT%';" ^
+    "try {" ^
+    "  $port = New-Object System.IO.Ports.SerialPort($portName, 115200);" ^
+    "  $port.DtrEnable = $false;" ^
+    "  $port.RtsEnable = $false;" ^
+    "  $port.Open();" ^
+    "  Start-Sleep -Milliseconds 800;" ^
+    "  $port.WriteLine('WIFI=%CFG_WIFI_SSID%,%CFG_WIFI_PASS%');" ^
+    "  Start-Sleep -Milliseconds 400;" ^
+    "  $port.WriteLine('STATUS');" ^
+    "  Start-Sleep -Milliseconds 400;" ^
+    "  $port.WriteLine('REBOOT');" ^
+    "  Start-Sleep -Milliseconds 600;" ^
+    "  $port.Close();" ^
+    "  [System.IO.File]::WriteAllText('%temp%\esp_cfg_result.txt', 'SUCCESS');" ^
+    "} catch {" ^
+    "  [System.IO.File]::WriteAllText('%temp%\esp_cfg_result.txt', ('ERROR: ' + $_.Exception.Message));" ^
+    "}"
+
+set /p CFG_RESULT=<"%temp%\esp_cfg_result.txt"
+del /f /q "%temp%\esp_cfg_result.txt" >nul 2>&1
+
+echo.
+if "%CFG_RESULT%"=="SUCCESS" (
+    echo ======================================================================
+    echo  🎉 [УСПЕХ] Wi-Fi SSID '%CFG_WIFI_SSID%' успешно сохранен в ESP32!
+    echo  Контроллер перезагружается и подключается к роутеру...
+    echo ======================================================================
+) else (
+    echo [!] Ошибка связи с портом: %CFG_RESULT%
+)
+
+echo.
+echo Открыть Serial Монитор, чтобы увидеть полученный IP адрес? (Y/N)
+set "OPEN_MON="
+set /p OPEN_MON="[Y/N, по умолчанию Y]: "
+if /i "%OPEN_MON%"=="N" goto MAIN_MENU
+goto OPEN_SERIAL_TERMINAL
+
+:: -------------------------------------------------------------
+:: Mode 6: Full USB Configuration Wizard (Sends commands over COM port)
 :: -------------------------------------------------------------
 :USB_SETUP_WIZARD
 echo.
@@ -594,20 +680,43 @@ goto POST_FLASH_MENU
 :: Mode: Open Serial Terminal
 :: -------------------------------------------------------------
 :OPEN_SERIAL_TERMINAL
-if exist "%~dp0terminal.bat" (
-    call "%~dp0terminal.bat"
-) else (
-    echo [*] Запуск встроенного Serial Monitor (115200 baud)...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "$ports = [System.IO.Ports.SerialPort]::GetPortNames();" ^
-        "if ($ports.Count -eq 0) { Write-Host '[ERROR] COM порт не найден.'; return }" ^
-        "$p = $ports[0];" ^
-        "Write-Host ('[*] Открытие ' + $p + ' на 115200 baud... Нажмите Ctrl+C для выхода.');" ^
-        "$sp = New-Object System.IO.Ports.SerialPort $p, 115200;" ^
-        "$sp.Open();" ^
-        "while ($true) { if ($sp.BytesToRead -gt 0) { [Console]::Write($sp.ReadExisting()) } Start-Sleep -Milliseconds 20 }"
-)
-goto POST_FLASH_MENU
+cls
+echo ======================================================================
+echo  📟 Live Serial Monitor (115200 baud)
+echo ======================================================================
+echo.
+echo [*] Ожидание стабилизации порта ESP32 после перезагрузки...
+timeout /t 2 >nul
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ports = @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object);" ^
+    "if ($ports.Count -eq 0) { Write-Host '[ERROR] COM порт не найден. Подключите ESP32 по USB.' -ForegroundColor Red; Start-Sleep -Seconds 3; return }" ^
+    "$usbPorts = @($ports | Where-Object { $_ -ne 'COM1' });" ^
+    "$p = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] };" ^
+    "Write-Host ('[*] Открытие порта ' + $p + ' (115200 бод)...') -ForegroundColor Green;" ^
+    "Write-Host '[*] Для выхода в главное меню нажмите Ctrl+C' -ForegroundColor Yellow;" ^
+    "Write-Host '----------------------------------------------------------------------' -ForegroundColor Gray;" ^
+    "try {" ^
+    "  $sp = New-Object System.IO.Ports.SerialPort($p, 115200);" ^
+    "  $sp.DtrEnable = $true;" ^
+    "  $sp.RtsEnable = $false;" ^
+    "  $sp.Open();" ^
+    "  while ($sp.IsOpen) {" ^
+    "    if ($sp.BytesToRead -gt 0) {" ^
+    "      [Console]::Write($sp.ReadExisting());" ^
+    "    }" ^
+    "    Start-Sleep -Milliseconds 15;" ^
+    "  }" ^
+    "} catch {" ^
+    "  Write-Host ('[!] Ошибка чтения порта: ' + $_.Exception.Message) -ForegroundColor Red;" ^
+    "}"
+
+echo.
+echo ======================================================================
+echo Монитор порта завершил работу.
+echo ======================================================================
+pause
+goto MAIN_MENU
 
 :EXIT_SCRIPT
 echo.

@@ -1257,6 +1257,4 @@ private:
 </html>
 )rawliteral";
     }
-    }
 };
-

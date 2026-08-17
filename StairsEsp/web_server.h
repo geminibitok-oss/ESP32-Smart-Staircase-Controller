@@ -10,245 +10,7 @@
 #include <Preferences.h>
 #include "config.h"
 
-class StairWebServer {
-public:
-    AsyncWebServer server;
-    Preferences prefs;
-
-    StairWebServer() : server(80) {}
-
-    void begin(void (*onColorChange)(uint8_t r, uint8_t g, uint8_t b),
-               void (*onTrigger)(bool isBottom),
-               String (*getStatusJson)(),
-               void (*onConfigChange)(),
-               bool (*onTriggerOta)(String binUrl) = nullptr,
-               String (*getOtaStatus)() = nullptr) {
-
-        prefs.begin("stairs_cfg", false);
-
-        server.on("/", HTTP_GET, [this, getStatusJson](AsyncWebServerRequest *request) {
-            String html = getIndexHtml();
-            request->send(200, "text/html", html);
-        });
-
-        server.on("/api/status", HTTP_GET, [getStatusJson](AsyncWebServerRequest *request) {
-            request->send(200, "application/json", getStatusJson());
-        });
-
-        server.on("/api/ota_status", HTTP_GET, [getOtaStatus](AsyncWebServerRequest *request) {
-            if (getOtaStatus) {
-                request->send(200, "application/json", getOtaStatus());
-            } else {
-                request->send(200, "application/json", "{\"is_updating\":false,\"progress\":0,\"status\":\"idle\"}");
-            }
-        });
-
-        // Trigger Direct OTA from GitHub URL
-        server.on("/api/ota_install_github", HTTP_POST, [onTriggerOta](AsyncWebServerRequest *request) {
-            if (!onTriggerOta) {
-                request->send(500, "application/json", "{\"error\":\"OTA engine unavailable\"}");
-                return;
-            }
-            String binUrl = "";
-            if (request->hasParam("url", true)) {
-                binUrl = request->getParam("url", true)->value();
-            } else if (request->hasParam("version", true)) {
-                String ver = request->getParam("version", true)->value();
-                binUrl = "https://github.com/" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + "/releases/download/" + ver + "/firmware.bin";
-            }
-            if (binUrl.length() == 0) {
-                request->send(400, "application/json", "{\"error\":\"Missing binary URL or version\"}");
-                return;
-            }
-
-            request->send(200, "application/json", "{\"status\":\"started\",\"bin_url\":\"" + binUrl + "\"}");
-            
-            // Execute flash in background or after response
-            delay(200);
-            onTriggerOta(binUrl);
-        });
-
-        // Scan available WiFi networks
-        server.on("/api/scan_wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
-            int n = WiFi.scanComplete();
-            if (n == -2) {
-                WiFi.scanNetworks(true);
-                request->send(200, "application/json", "{\"status\":\"scanning\"}");
-            } else if (n) {
-                String json = "{\"status\":\"done\",\"networks\":[";
-                for (int i = 0; i < n; ++i) {
-                    if (i) json += ",";
-                    json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
-                }
-                json += "]}";
-                WiFi.scanDelete();
-                WiFi.scanNetworks(true);
-                request->send(200, "application/json", json);
-            } else {
-                WiFi.scanNetworks(true);
-                request->send(200, "application/json", "{\"status\":\"scanning\"}");
-            }
-        });
-
-        server.on("/api/trigger", HTTP_POST, [onTrigger](AsyncWebServerRequest *request) {
-            if (request->hasParam("dir", true)) {
-                String dir = request->getParam("dir", true)->value();
-                if (dir == "up") onTrigger(true);
-                else onTrigger(false);
-            }
-            request->send(200, "application/json", "{\"status\":\"triggered\"}");
-        });
-
-        server.on("/api/color", HTTP_POST, [onColorChange, this](AsyncWebServerRequest *request) {
-            if (request->hasParam("r", true) && request->hasParam("g", true) && request->hasParam("b", true)) {
-                int r = request->getParam("r", true)->value().toInt();
-                int g = request->getParam("g", true)->value().toInt();
-                int b = request->getParam("b", true)->value().toInt();
-                prefs.putUChar("col_r", (uint8_t)r);
-                prefs.putUChar("col_g", (uint8_t)g);
-                prefs.putUChar("col_b", (uint8_t)b);
-                onColorChange(r, g, b);
-            }
-            request->send(200, "application/json", "{\"status\":\"ok\"}");
-        });
-
-        // Save Wi-Fi Credentials & Parameters
-        server.on("/api/save_config", HTTP_POST, [this, onConfigChange](AsyncWebServerRequest *request) {
-            if (request->hasParam("ssid", true)) {
-                String ssid = request->getParam("ssid", true)->value();
-                String pass = request->hasParam("pass", true) ? request->getParam("pass", true)->value() : "";
-                prefs.putString("wifi_ssid", ssid);
-                prefs.putString("wifi_pass", pass);
-            }
-
-            if (request->hasParam("num_steps", true)) {
-                prefs.putUChar("num_steps", (uint8_t)request->getParam("num_steps", true)->value().toInt());
-            }
-            if (request->hasParam("leds_step", true)) {
-                prefs.putUChar("leds_step", (uint8_t)request->getParam("leds_step", true)->value().toInt());
-            }
-            if (request->hasParam("anim_speed", true)) {
-                prefs.putUInt("anim_spd", request->getParam("anim_speed", true)->value().toInt());
-            }
-            if (request->hasParam("hold_time", true)) {
-                prefs.putUInt("hold_sec", request->getParam("hold_time", true)->value().toInt());
-            }
-            if (request->hasParam("act_bright", true)) {
-                prefs.putUChar("act_bri", (uint8_t)request->getParam("act_bright", true)->value().toInt());
-            }
-            if (request->hasParam("sb_bright", true)) {
-                prefs.putUChar("sb_bri", (uint8_t)request->getParam("sb_bright", true)->value().toInt());
-            }
-            if (request->hasParam("sb_mode", true)) {
-                prefs.putUChar("sb_mode", (uint8_t)request->getParam("sb_mode", true)->value().toInt());
-            }
-
-            // GPIO Pins Configuration
-            if (request->hasParam("pin_led", true)) {
-                prefs.putUChar("pin_led", (uint8_t)request->getParam("pin_led", true)->value().toInt());
-            }
-            if (request->hasParam("pin_bot", true)) {
-                prefs.putUChar("pin_bot", (uint8_t)request->getParam("pin_bot", true)->value().toInt());
-            }
-            if (request->hasParam("pin_top", true)) {
-                prefs.putUChar("pin_top", (uint8_t)request->getParam("pin_top", true)->value().toInt());
-            }
-            if (request->hasParam("pin_ldr", true)) {
-                prefs.putUChar("pin_ldr", (uint8_t)request->getParam("pin_ldr", true)->value().toInt());
-            }
-            if (request->hasParam("sensor_high", true)) {
-                prefs.putUChar("sensor_high", (uint8_t)request->getParam("sensor_high", true)->value().toInt());
-            }
-            if (request->hasParam("pull_mode", true)) {
-                prefs.putUChar("pull_mode", (uint8_t)request->getParam("pull_mode", true)->value().toInt());
-            }
-            if (request->hasParam("auto_ota", true)) {
-                prefs.putUChar("auto_ota", (uint8_t)request->getParam("auto_ota", true)->value().toInt());
-            }
-
-            if (onConfigChange) onConfigChange();
-
-            bool reboot = request->hasParam("reboot", true) && request->getParam("reboot", true)->value() == "1";
-            request->send(200, "application/json", "{\"status\":\"saved\",\"rebooting\":" + String(reboot ? "true" : "false") + "}");
-            
-            if (reboot) {
-                delay(1000);
-                ESP.restart();
-            }
-        });
-
-        server.on("/api/restart", HTTP_POST, [](AsyncWebServerRequest *request) {
-            request->send(200, "application/json", "{\"status\":\"restarting\"}");
-            delay(1000);
-            ESP.restart();
-        });
-
-        server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
-            String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>OTA Upload</title>"
-                          "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                          "<style>body{font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;text-align:center;}"
-                          ".card{background:#1e293b;padding:30px;border-radius:12px;display:inline-block;max-width:400px;width:100%;}"
-                          "input{margin:15px 0;width:100%;padding:10px;border-radius:6px;box-sizing:border-box;}"
-                          ".btn{background:#3b82f6;color:#fff;border:none;cursor:pointer;font-weight:bold;}</style></head><body>"
-                          "<div class='card'><h2>⚡ ESP32 Firmware Flash</h2>"
-                          "<form method='POST' action='/update' enctype='multipart/form-data'>"
-                          "<input type='file' name='update' accept='.bin'><br>"
-                          "<input type='submit' class='btn' value='Загрузить и прошить (.bin)'>"
-                          "</form><br><a href='/' style='color:#38bdf8'>← Назад в панель</a></div></body></html>";
-            request->send(200, "text/html", html);
-        });
-
-        server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
-            bool shouldReboot = !Update.hasError();
-            AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK - Перезагрузка..." : "FAIL");
-            response->addHeader("Connection", "close");
-            request->send(response);
-            if (shouldReboot) {
-                delay(1000);
-                ESP.restart();
-            }
-        }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-            if (!index) {
-                Serial.printf("[MANUAL_OTA] Start update: %s\n", filename.c_str());
-                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-                    Update.printError(Serial);
-                }
-            }
-            if (Update.write(data, len) != len) {
-                Update.printError(Serial);
-            }
-            if (final) {
-                if (Update.end(true)) {
-                    Serial.printf("[MANUAL_OTA] Success: %u B\n", index + len);
-                } else {
-                    Update.printError(Serial);
-                }
-            }
-        });
-
-        server.begin();
-        Serial.println("[HTTP] Full Web Server listening on port 80");
-    }
-
-private:
-    String getIndexHtml() {
-        String savedSsid = prefs.getString("wifi_ssid", DEFAULT_WIFI_SSID);
-        uint8_t numSteps = prefs.getUChar("num_steps", DEFAULT_NUM_STEPS);
-        uint8_t ledsStep = prefs.getUChar("leds_step", DEFAULT_LEDS_STEP);
-        uint32_t animSpd = prefs.getUInt("anim_spd", STEP_ANIM_SPEED_MS);
-        uint32_t holdSec = prefs.getUInt("hold_sec", HOLD_TIME_SECONDS);
-        uint8_t actBri = prefs.getUChar("act_bri", ACTIVE_BRIGHTNESS);
-        uint8_t sbBri = prefs.getUChar("sb_bri", STANDBY_BRIGHTNESS);
-        uint8_t sbMode = prefs.getUChar("sb_mode", STANDBY_MODE_TYPE);
-
-        uint8_t pinLed = prefs.getUChar("pin_led", PIN_LED_DATA);
-        uint8_t pinBot = prefs.getUChar("pin_bot", PIN_BOTTOM_PIR);
-        uint8_t pinTop = prefs.getUChar("pin_top", PIN_TOP_PIR);
-        uint8_t sensorHigh = prefs.getUChar("sensor_high", 1);
-        uint8_t pullMode = prefs.getUChar("pull_mode", 0);
-        uint8_t autoOta = prefs.getUChar("auto_ota", DEFAULT_AUTO_OTA);
-
-        return R"rawliteral(<!DOCTYPE html>
+static const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="utf-8">
@@ -1256,5 +1018,228 @@ private:
 </body>
 </html>
 )rawliteral";
+
+class StairWebServer {
+public:
+    AsyncWebServer server;
+    Preferences prefs;
+
+    StairWebServer() : server(80) {}
+
+    void begin(void (*onColorChange)(uint8_t r, uint8_t g, uint8_t b),
+               void (*onTrigger)(bool isBottom),
+               String (*getStatusJson)(),
+               void (*onConfigChange)(),
+               bool (*onTriggerOta)(String binUrl) = nullptr,
+               String (*getOtaStatus)() = nullptr) {
+
+        prefs.begin("stairs_cfg", false);
+
+        server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+            AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html; charset=utf-8", (const uint8_t*)INDEX_HTML, sizeof(INDEX_HTML) - 1);
+            response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            response->addHeader("Access-Control-Allow-Origin", "*");
+            request->send(response);
+        });
+
+        server.on("/api/status", HTTP_GET, [getStatusJson](AsyncWebServerRequest *request) {
+            request->send(200, "application/json", getStatusJson());
+        });
+
+        server.on("/api/ota_status", HTTP_GET, [getOtaStatus](AsyncWebServerRequest *request) {
+            if (getOtaStatus) {
+                request->send(200, "application/json", getOtaStatus());
+            } else {
+                request->send(200, "application/json", "{\"is_updating\":false,\"progress\":0,\"status\":\"idle\"}");
+            }
+        });
+
+        // Trigger Direct OTA from GitHub URL
+        server.on("/api/ota_install_github", HTTP_POST, [onTriggerOta](AsyncWebServerRequest *request) {
+            if (!onTriggerOta) {
+                request->send(500, "application/json", "{\"error\":\"OTA engine unavailable\"}");
+                return;
+            }
+            String binUrl = "";
+            if (request->hasParam("url", true)) {
+                binUrl = request->getParam("url", true)->value();
+            } else if (request->hasParam("version", true)) {
+                String ver = request->getParam("version", true)->value();
+                binUrl = "https://github.com/" + String(GITHUB_USER) + "/" + String(GITHUB_REPO) + "/releases/download/" + ver + "/firmware.bin";
+            }
+            if (binUrl.length() == 0) {
+                request->send(400, "application/json", "{\"error\":\"Missing binary URL or version\"}");
+                return;
+            }
+
+            request->send(200, "application/json", "{\"status\":\"started\",\"bin_url\":\"" + binUrl + "\"}");
+            
+            // Execute flash in background or after response
+            delay(200);
+            onTriggerOta(binUrl);
+        });
+
+        // Scan available WiFi networks
+        server.on("/api/scan_wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
+            int n = WiFi.scanComplete();
+            if (n == -2) {
+                WiFi.scanNetworks(true);
+                request->send(200, "application/json", "{\"status\":\"scanning\"}");
+            } else if (n) {
+                String json = "{\"status\":\"done\",\"networks\":[";
+                for (int i = 0; i < n; ++i) {
+                    if (i) json += ",";
+                    json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+                }
+                json += "]}";
+                WiFi.scanDelete();
+                WiFi.scanNetworks(true);
+                request->send(200, "application/json", json);
+            } else {
+                WiFi.scanNetworks(true);
+                request->send(200, "application/json", "{\"status\":\"scanning\"}");
+            }
+        });
+
+        server.on("/api/trigger", HTTP_POST, [onTrigger](AsyncWebServerRequest *request) {
+            if (request->hasParam("dir", true)) {
+                String dir = request->getParam("dir", true)->value();
+                if (dir == "up") onTrigger(true);
+                else onTrigger(false);
+            }
+            request->send(200, "application/json", "{\"status\":\"triggered\"}");
+        });
+
+        server.on("/api/color", HTTP_POST, [onColorChange, this](AsyncWebServerRequest *request) {
+            if (request->hasParam("r", true) && request->hasParam("g", true) && request->hasParam("b", true)) {
+                int r = request->getParam("r", true)->value().toInt();
+                int g = request->getParam("g", true)->value().toInt();
+                int b = request->getParam("b", true)->value().toInt();
+                prefs.putUChar("col_r", (uint8_t)r);
+                prefs.putUChar("col_g", (uint8_t)g);
+                prefs.putUChar("col_b", (uint8_t)b);
+                onColorChange(r, g, b);
+            }
+            request->send(200, "application/json", "{\"status\":\"ok\"}");
+        });
+
+        // Save Wi-Fi Credentials & Parameters
+        server.on("/api/save_config", HTTP_POST, [this, onConfigChange](AsyncWebServerRequest *request) {
+            if (request->hasParam("ssid", true)) {
+                String ssid = request->getParam("ssid", true)->value();
+                String pass = request->hasParam("pass", true) ? request->getParam("pass", true)->value() : "";
+                prefs.putString("wifi_ssid", ssid);
+                prefs.putString("wifi_pass", pass);
+            }
+
+            if (request->hasParam("num_steps", true)) {
+                prefs.putUChar("num_steps", (uint8_t)request->getParam("num_steps", true)->value().toInt());
+            }
+            if (request->hasParam("leds_step", true)) {
+                prefs.putUChar("leds_step", (uint8_t)request->getParam("leds_step", true)->value().toInt());
+            }
+            if (request->hasParam("anim_speed", true)) {
+                prefs.putUInt("anim_spd", request->getParam("anim_speed", true)->value().toInt());
+            }
+            if (request->hasParam("hold_time", true)) {
+                prefs.putUInt("hold_sec", request->getParam("hold_time", true)->value().toInt());
+            }
+            if (request->hasParam("act_bright", true)) {
+                prefs.putUChar("act_bri", (uint8_t)request->getParam("act_bright", true)->value().toInt());
+            }
+            if (request->hasParam("sb_bright", true)) {
+                prefs.putUChar("sb_bri", (uint8_t)request->getParam("sb_bright", true)->value().toInt());
+            }
+            if (request->hasParam("sb_mode", true)) {
+                prefs.putUChar("sb_mode", (uint8_t)request->getParam("sb_mode", true)->value().toInt());
+            }
+
+            // GPIO Pins Configuration
+            if (request->hasParam("pin_led", true)) {
+                prefs.putUChar("pin_led", (uint8_t)request->getParam("pin_led", true)->value().toInt());
+            }
+            if (request->hasParam("pin_bot", true)) {
+                prefs.putUChar("pin_bot", (uint8_t)request->getParam("pin_bot", true)->value().toInt());
+            }
+            if (request->hasParam("pin_top", true)) {
+                prefs.putUChar("pin_top", (uint8_t)request->getParam("pin_top", true)->value().toInt());
+            }
+            if (request->hasParam("pin_ldr", true)) {
+                prefs.putUChar("pin_ldr", (uint8_t)request->getParam("pin_ldr", true)->value().toInt());
+            }
+            if (request->hasParam("sensor_high", true)) {
+                prefs.putUChar("sensor_high", (uint8_t)request->getParam("sensor_high", true)->value().toInt());
+            }
+            if (request->hasParam("pull_mode", true)) {
+                prefs.putUChar("pull_mode", (uint8_t)request->getParam("pull_mode", true)->value().toInt());
+            }
+            if (request->hasParam("auto_ota", true)) {
+                prefs.putUChar("auto_ota", (uint8_t)request->getParam("auto_ota", true)->value().toInt());
+            }
+
+            if (onConfigChange) onConfigChange();
+
+            bool reboot = request->hasParam("reboot", true) && request->getParam("reboot", true)->value() == "1";
+            request->send(200, "application/json", "{\"status\":\"saved\",\"rebooting\":" + String(reboot ? "true" : "false") + "}");
+            
+            if (reboot) {
+                delay(1000);
+                ESP.restart();
+            }
+        });
+
+        server.on("/api/restart", HTTP_POST, [](AsyncWebServerRequest *request) {
+            request->send(200, "application/json", "{\"status\":\"restarting\"}");
+            delay(1000);
+            ESP.restart();
+        });
+
+        server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
+            String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>OTA Upload</title>"
+                          "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                          "<style>body{font-family:sans-serif;background:#0f172a;color:#fff;padding:20px;text-align:center;}"
+                          ".card{background:#1e293b;padding:30px;border-radius:12px;display:inline-block;max-width:400px;width:100%;}"
+                          "input{margin:15px 0;width:100%;padding:10px;border-radius:6px;box-sizing:border-box;}"
+                          ".btn{background:#3b82f6;color:#fff;border:none;cursor:pointer;font-weight:bold;}</style></head><body>"
+                          "<div class='card'><h2>⚡ ESP32 Firmware Flash</h2>"
+                          "<form method='POST' action='/update' enctype='multipart/form-data'>"
+                          "<input type='file' name='update' accept='.bin'><br>"
+                          "<input type='submit' class='btn' value='Загрузить и прошить (.bin)'>"
+                          "</form><br><a href='/' style='color:#38bdf8'>← Назад в панель</a></div></body></html>";
+            request->send(200, "text/html", html);
+        });
+
+        server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+            bool shouldReboot = !Update.hasError();
+            AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK - Перезагрузка..." : "FAIL");
+            response->addHeader("Connection", "close");
+            request->send(response);
+            if (shouldReboot) {
+                delay(1000);
+                ESP.restart();
+            }
+        }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+            if (!index) {
+                Serial.printf("[MANUAL_OTA] Start update: %s\n", filename.c_str());
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    Update.printError(Serial);
+                }
+            }
+            if (Update.write(data, len) != len) {
+                Update.printError(Serial);
+            }
+            if (final) {
+                if (Update.end(true)) {
+                    Serial.printf("[MANUAL_OTA] Success: %u B\n", index + len);
+                } else {
+                    Update.printError(Serial);
+                }
+            }
+        });
+
+        server.begin();
+        Serial.println("[HTTP] Full Web Server listening on port 80");
     }
+
+
 };

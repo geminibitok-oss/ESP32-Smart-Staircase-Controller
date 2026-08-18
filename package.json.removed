@@ -1,0 +1,3 @@
+# Package.json removed in firmware-only branch
+
+This repo has been reduced to firmware-only. The web UI package.json and related frontend artifacts were intentionally removed and are available in the original branch history.

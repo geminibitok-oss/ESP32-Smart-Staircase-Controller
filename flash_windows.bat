@@ -3,120 +3,112 @@ chcp 65001 >nul
 cd /d "%~dp0"
 title ESP32 Smart Staircase - Firmware Flasher
 
-:: ======================================================================
-:: ESP32 Smart Staircase Controller - Firmware Flasher
-:: ======================================================================
-
-set "GH_USER=geminibitok-oss"
-set "GH_REPO=ESP32-Smart-Staircase-Controller"
-set "CURRENT_VER=1.0.14"
-
 :MAIN_MENU
 cls
 echo ======================================================================
-echo    🌟 ESP32 Smart Staircase Controller - Firmware Flasher
+echo    🌟 ESP32 Smart Staircase Controller - Прошивка и Настройка
 echo ======================================================================
 echo.
-echo Репозиторий: %GH_USER%/%GH_REPO% (Версия: v%CURRENT_VER%)
-echo Текущая папка: %~dp0
+echo Папка запуска: %~dp0
 echo.
 echo Выберите действие:
 echo.
-echo   [1] ⚡ Прошить текущую локальную версию (Автоопределение файлов в папке)
+echo   [1] ⚡ Прошить текущую локальную версию (Автопоиск файлов в папке)
 echo   [2] 📁 Выбрать локальный .bin файл на компьютере вручную
 echo   [3] 🌐 Скачать последнюю версию прошивки из GitHub Releases и прошить
 echo   [4] 🧹 ПОЛНАЯ ОЧИСТКА ПАМЯТИ ESP32 (Erase Flash - сброс всех настроек)
-echo   [5] 📶 Беспроводное OTA-обновление по Wi-Fi (без USB кабеля)
-echo   [6] 📶 НАСТРОЙКА WI-FI (SSID и пароль через USB)
-echo   [7] ⚙️  Мастер настройки параметров (LED, Пины, Яркость, Ступени)
-echo   [8] 📟 Открыть Монитор Serial Порта (Live логи 115200)
-echo   [9] 🚪 Выход
+echo   [5] 📶 Настройка Wi-Fi через USB (SSID и пароль за 5 секунд)
+echo   [6] ⚙️  Мастер настройки параметров (LED, Пины, Яркость, Ступени)
+echo   [7] 📟 Открыть Монитор Serial Порта (Live логи 115200)
+echo   [8] 🚪 Выход
 echo.
-set "MENU_CHOICE="
-set /p MENU_CHOICE="Введите номер пункта (1-9) [По умолчанию 1]: "
-if "%MENU_CHOICE%"=="" set MENU_CHOICE=1
 
-if "%MENU_CHOICE%"=="1" goto FLASH_LOCAL_AUTO
-if "%MENU_CHOICE%"=="2" goto FLASH_LOCAL_MANUAL
-if "%MENU_CHOICE%"=="3" goto GITHUB_RELEASE_PICKER
-if "%MENU_CHOICE%"=="4" goto FULL_ERASE_MENU
-if "%MENU_CHOICE%"=="5" goto OTA_WIFI_UPDATE
-if "%MENU_CHOICE%"=="6" goto USB_WIFI_ONLY
-if "%MENU_CHOICE%"=="7" goto USB_SETUP_WIZARD
-if "%MENU_CHOICE%"=="8" goto OPEN_SERIAL_TERMINAL
-if "%MENU_CHOICE%"=="9" goto EXIT_SCRIPT
+set "CHOICE="
+set /p CHOICE="Введите номер пункта (1-8) [По умолчанию 1]: "
+if "%CHOICE%"=="" set CHOICE=1
 
-echo [!] Неверный ввод. Пожалуйста, введите цифру от 1 до 9.
-timeout /t 2 >nul
+if "%CHOICE%"=="1" goto FLASH_AUTO
+if "%CHOICE%"=="2" goto FLASH_MANUAL
+if "%CHOICE%"=="3" goto FLASH_GITHUB
+if "%CHOICE%"=="4" goto FLASH_ERASE
+if "%CHOICE%"=="5" goto SETUP_WIFI
+if "%CHOICE%"=="6" goto SETUP_WIZARD
+if "%CHOICE%"=="7" goto SERIAL_MONITOR
+if "%CHOICE%"=="8" goto SCRIPT_EXIT
+
+echo.
+echo [!] Неверный ввод: %CHOICE%
+pause
 goto MAIN_MENU
 
 :: -------------------------------------------------------------
-:: Mode 1: Auto-detect local binary files and flash
+:: 1. АВТОПРОШИВКА ЛОКАЛЬНЫХ ФАЙЛОВ
 :: -------------------------------------------------------------
-:FLASH_LOCAL_AUTO
+:FLASH_AUTO
 cls
 echo ======================================================================
 echo  ⚡ [Режим 1] Автопоиск и прошивка локальных файлов
 echo ======================================================================
 echo.
 
-call :ENSURE_ESPTOOL
-if "%ESPTOOL_ERROR%"=="1" (
+:: 1. Проверяем esptool
+call :PREPARE_ESPTOOL
+if "%ESPTOOL_READY%"=="0" (
     echo.
-    echo ❌ [ОШИБКА] Не удалось найти или подготовить esptool.exe.
-    echo Пожалуйста, убедитесь, что esptool.exe находится в папке с этим файлом.
-    echo.
+    echo ❌ [ОШИБКА] Не найдена утилита esptool.exe!
     pause
     goto MAIN_MENU
 )
 
-set "FLASH_CMD="
+:: 2. Ищем бинарники
+set "FLASH_BIN_CMD="
 
 if exist "%~dp0StairsEsp.ino.bootloader.bin" if exist "%~dp0StairsEsp.ino.partitions.bin" if exist "%~dp0StairsEsp.ino.bin" (
     echo [INFO] Найден полный комплект Arduino CLI:
     echo        - Bootloader: StairsEsp.ino.bootloader.bin (0x1000)
     echo        - Partitions: StairsEsp.ino.partitions.bin (0x8000)
     echo        - Firmware:   StairsEsp.ino.bin (0x10000)
-    set FLASH_CMD=0x1000 "%~dp0StairsEsp.ino.bootloader.bin" 0x8000 "%~dp0StairsEsp.ino.partitions.bin" 0x10000 "%~dp0StairsEsp.ino.bin"
-    goto :FOUND_BIN
+    set FLASH_BIN_CMD=0x1000 "%~dp0StairsEsp.ino.bootloader.bin" 0x8000 "%~dp0StairsEsp.ino.partitions.bin" 0x10000 "%~dp0StairsEsp.ino.bin"
+    goto RUN_FLASH_AUTO
 )
 
 if exist "%~dp0firmware_merged.bin" (
-    echo [INFO] Найден файл полного образа: firmware_merged.bin (0x0)
-    set FLASH_CMD=0x0 "%~dp0firmware_merged.bin"
-    goto :FOUND_BIN
+    echo [INFO] Найден файл: firmware_merged.bin (0x0)
+    set FLASH_BIN_CMD=0x0 "%~dp0firmware_merged.bin"
+    goto RUN_FLASH_AUTO
 )
 
 if exist "%~dp0firmware.bin" (
-    echo [INFO] Найден файл прошивки: firmware.bin (0x10000)
-    set FLASH_CMD=0x10000 "%~dp0firmware.bin"
-    goto :FOUND_BIN
+    echo [INFO] Найден файл: firmware.bin (0x10000)
+    set FLASH_BIN_CMD=0x10000 "%~dp0firmware.bin"
+    goto RUN_FLASH_AUTO
 )
 
 if exist "%~dp0StairsEsp.ino.bin" (
-    echo [INFO] Найден файл прошивки: StairsEsp.ino.bin (0x10000)
-    set FLASH_CMD=0x10000 "%~dp0StairsEsp.ino.bin"
-    goto :FOUND_BIN
+    echo [INFO] Найден файл: StairsEsp.ino.bin (0x10000)
+    set FLASH_BIN_CMD=0x10000 "%~dp0StairsEsp.ino.bin"
+    goto RUN_FLASH_AUTO
 )
 
 for %%F in ("%~dp0*.bin") do (
     echo [INFO] Найден файл: %%~nxF (0x10000)
-    set FLASH_CMD=0x10000 "%%~fF"
-    goto :FOUND_BIN
+    set FLASH_BIN_CMD=0x10000 "%%~fF"
+    goto RUN_FLASH_AUTO
 )
 
-:FOUND_BIN
-if "%FLASH_CMD%"=="" (
+:RUN_FLASH_AUTO
+if "%FLASH_BIN_CMD%"=="" (
     echo.
-    echo ❌ [ОШИБКА] В текущей папке (%~dp0) не найдено ни одного .bin файла прошивки!
-    echo Убедитесь, что вы распаковали архив с прошивкой полностью.
+    echo ❌ [ОШИБКА] В папке "%~dp0" нет файлов прошивки (.bin)!
+    echo.
+    echo ⚠️ Убедитесь, что вы РАСПАКОВАЛИ zip архив в обычную папку.
     echo.
     pause
     goto MAIN_MENU
 )
 
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" (
     echo.
     echo ❌ [ОШИБКА] COM-порт не выбран.
     pause
@@ -124,306 +116,241 @@ if "%DETECTED_PORT%"=="" (
 )
 
 echo.
-echo [*] Запуск прошивки ESP32 через esptool на скорости 921600 бод (Порт: %DETECTED_PORT%)...
+echo ======================================================================
+echo [*] Прошивка ESP32 на порту %SELECTED_COM%...
+echo ======================================================================
 echo.
-%ESPTOOL_RUN% --chip esp32 --port %DETECTED_PORT% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_CMD%
 
-if %ERRORLEVEL% equ 0 (
-    echo.
-    echo ======================================================================
-    echo  🎉 [УСПЕХ] Прошивка успешно загружена в ESP32!
-    echo ======================================================================
-    pause
-    goto POST_FLASH_MENU
+if "%USE_PYTHON_ESPTOOL%"=="1" (
+    python -m esptool --chip esp32 --port %SELECTED_COM% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_BIN_CMD%
 ) else (
+    "%ESPTOOL_EXE%" --chip esp32 --port %SELECTED_COM% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_BIN_CMD%
+)
+
+if errorlevel 1 (
     echo.
-    echo [!] Ошибка прошивки на высокой скорости. Пробуем безопасную скорость 115200...
+    echo [!] Повтор на безопасной скорости 115200 бод...
     echo.
-    %ESPTOOL_RUN% --chip esp32 --port %DETECTED_PORT% --baud 115200 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_CMD%
-    if %ERRORLEVEL% equ 0 (
-        echo.
-        echo ======================================================================
-        echo  🎉 [УСПЕХ] Прошивка успешно загружена в ESP32!
-        echo ======================================================================
-        pause
-        goto POST_FLASH_MENU
+    if "%USE_PYTHON_ESPTOOL%"=="1" (
+        python -m esptool --chip esp32 --port %SELECTED_COM% --baud 115200 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_BIN_CMD%
     ) else (
-        echo.
-        echo ❌ [ОШИБКА] Не удалось прошить ESP32.
-        echo.
-        echo Возможные причины:
-        echo   1. Плата не перешла в режим загрузки (Зажмите кнопку BOOT на ESP32 перед запуском).
-        echo   2. Порт %DETECTED_PORT% занят другой программой (Arduino IDE, Cura, терминал).
-        echo   3. Некачественный USB-кабель (нужен кабель с поддержкой передачи данных).
-        echo.
-        pause
-        goto MAIN_MENU
+        "%ESPTOOL_EXE%" --chip esp32 --port %SELECTED_COM% --baud 115200 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_BIN_CMD%
     )
 )
 
-:: -------------------------------------------------------------
-:: Mode 2: Manual .bin file selection
-:: -------------------------------------------------------------
-:FLASH_LOCAL_MANUAL
-cls
-echo ======================================================================
-echo  📁 [Режим 2] Выбор локального файла прошивки вручную
-echo ======================================================================
-echo.
-call :ENSURE_ESPTOOL
-if "%ESPTOOL_ERROR%"=="1" (
+if errorlevel 1 (
+    echo.
+    echo ======================================================================
+    echo ❌ НЕ УДАЛОСЬ ПРОШИТЬ ESP32!
+    echo ======================================================================
+    echo Возможные причины:
+    echo  1. Зажмите и удерживайте кнопку BOOT на ESP32 при подключении к USB.
+    echo  2. Порт %SELECTED_COM% занят (закройте Arduino IDE / Монитор порта).
+    echo  3. Используется кабель без передачи данных (только питание).
+    echo ======================================================================
+    echo.
     pause
     goto MAIN_MENU
 )
 
-echo Введите полный путь к .bin файлу или перетащите его мышкой в это окно:
+echo.
+echo ======================================================================
+echo  🎉 [УСПЕХ] Прошивка успешно загружена в ESP32!
+echo ======================================================================
+echo.
+pause
+goto POST_FLASH_DIALOG
+
+:: -------------------------------------------------------------
+:: 2. РУЧНОЙ ВЫБОР ФАЙЛА
+:: -------------------------------------------------------------
+:FLASH_MANUAL
+cls
+echo ======================================================================
+echo  📁 [Режим 2] Ручной выбор локального файла прошивки
+echo ======================================================================
+echo.
+call :PREPARE_ESPTOOL
+if "%ESPTOOL_READY%"=="0" ( pause & goto MAIN_MENU )
+
 set "CUSTOM_BIN="
-set /p CUSTOM_BIN="Путь к файлу: "
+set /p CUSTOM_BIN="Перетащите .bin файл мышкой в это окно или введите путь: "
 if "%CUSTOM_BIN%"=="" goto MAIN_MENU
 set CUSTOM_BIN=%CUSTOM_BIN:"=%
 
 if not exist "%CUSTOM_BIN%" (
     echo.
-    echo [ERROR] Указанный файл не существует: "%CUSTOM_BIN%"
+    echo [ERROR] Файл не найден: "%CUSTOM_BIN%"
     pause
     goto MAIN_MENU
 )
 
 echo.
 echo Выберите адрес смещения Flash памяти:
-echo   [1] 0x10000 (Стандартное приложение / App - РЕКОМЕНДУЕТСЯ)
+echo   [1] 0x10000 (Стандартная прошивка - РЕКОМЕНДУЕТСЯ)
 echo   [2] 0x0     (Полный образ / Full Binary Image)
 echo.
-set "OFFSET_CHOICE="
-set /p OFFSET_CHOICE="Адрес (1 или 2) [По умолчанию 1]: "
-if "%OFFSET_CHOICE%"=="2" (
-    set FLASH_CMD=0x0 "%CUSTOM_BIN%"
+set "ADDR_CHOICE="
+set /p ADDR_CHOICE="Адрес (1 или 2) [По умолчанию 1]: "
+if "%ADDR_CHOICE%"=="2" (
+    set FLASH_BIN_CMD=0x0 "%CUSTOM_BIN%"
 ) else (
-    set FLASH_CMD=0x10000 "%CUSTOM_BIN%"
+    set FLASH_BIN_CMD=0x10000 "%CUSTOM_BIN%"
 )
 
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" ( pause & goto MAIN_MENU )
+
+echo.
+echo [*] Прошивка файла в ESP32...
+if "%USE_PYTHON_ESPTOOL%"=="1" (
+    python -m esptool --chip esp32 --port %SELECTED_COM% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_BIN_CMD%
+) else (
+    "%ESPTOOL_EXE%" --chip esp32 --port %SELECTED_COM% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_BIN_CMD%
+)
+
+if errorlevel 1 (
+    echo.
+    echo ❌ Ошибка прошивки.
     pause
     goto MAIN_MENU
 )
 
 echo.
-echo [*] Запуск прошивки ESP32...
-%ESPTOOL_RUN% --chip esp32 --port %DETECTED_PORT% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_CMD%
-
-if %ERRORLEVEL% equ 0 (
-    echo.
-    echo ======================================================================
-    echo  🎉 [УСПЕХ] Прошивка успешно загружена в ESP32!
-    echo ======================================================================
-    pause
-    goto POST_FLASH_MENU
-) else (
-    echo.
-    echo [ERROR] Ошибка при прошивке файла.
-    pause
-    goto MAIN_MENU
-)
+echo 🎉 [УСПЕХ] Прошивка завершена!
+pause
+goto POST_FLASH_DIALOG
 
 :: -------------------------------------------------------------
-:: Mode 3: Download from GitHub Releases
+:: 3. СКАЧИВАНИЕ С GITHUB RELEASES
 :: -------------------------------------------------------------
-:GITHUB_RELEASE_PICKER
+:FLASH_GITHUB
 cls
 echo ======================================================================
-echo  🌐 [Режим 3] Загрузка прошивки из GitHub Releases
+echo  🌐 [Режим 3] Загрузка последней версии с GitHub
 echo ======================================================================
 echo.
-call :ENSURE_ESPTOOL
-if "%ESPTOOL_ERROR%"=="1" (
+call :PREPARE_ESPTOOL
+if "%ESPTOOL_READY%"=="0" ( pause & goto MAIN_MENU )
+
+set "GH_REPO_URL=https://github.com/geminibitok-oss/ESP32-Smart-Staircase-Controller/releases/latest/download/firmware.bin"
+set "DOWNLOADED_BIN=%~dp0github_firmware.bin"
+
+echo [*] Загрузка firmware.bin с GitHub...
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('%GH_REPO_URL%', '%DOWNLOADED_BIN%')"
+
+if not exist "%DOWNLOADED_BIN%" (
+    echo.
+    echo ❌ [ОШИБКА] Не удалось скачать файл. Проверьте интернет.
     pause
     goto MAIN_MENU
 )
 
-echo Доступные варианты:
-echo.
-echo   [1] 🚀 Скачать LATEST (самый свежий релиз напрямую с GitHub)
-echo   [2] ✍️  Ввести свой тег версии вручную (например v1.0.14)
-echo   [M] 🔙 Главное меню
-echo.
-set "REL_CHOICE="
-set /p REL_CHOICE="Выберите вариант (1, 2, M) [По умолчанию 1]: "
-if "%REL_CHOICE%"=="" set REL_CHOICE=1
-if /i "%REL_CHOICE%"=="M" goto MAIN_MENU
+echo [OK] Файл успешно скачан!
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" ( pause & goto MAIN_MENU )
 
-if "%REL_CHOICE%"=="1" (
-    set "DOWNLOAD_URL=https://github.com/%GH_USER%/%GH_REPO%/releases/latest/download/firmware.bin"
-    set "SELECTED_TAG=latest"
-    goto DO_DOWNLOAD
-)
-if "%REL_CHOICE%"=="2" (
-    set /p CUSTOM_TAG="Введите тег релиза (например v1.0.14): "
-    set "DOWNLOAD_URL=https://github.com/%GH_USER%/%GH_REPO%/releases/download/%CUSTOM_TAG%/firmware.bin"
-    set "SELECTED_TAG=%CUSTOM_TAG%"
-    goto DO_DOWNLOAD
-)
-
-:DO_DOWNLOAD
-echo.
-echo [*] Скачивание прошивки (%SELECTED_TAG%) с GitHub...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { (New-Object System.Net.WebClient).DownloadFile('%DOWNLOAD_URL%', '%~dp0downloaded_firmware.bin'); Write-Host '[OK] Файл успешно скачан!' } catch { Write-Host ('[ERROR] ' + $_.Exception.Message); exit 1 }"
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo [ERROR] Не удалось скачать прошивку. Проверьте интернет или имя тега.
-    pause
-    goto GITHUB_RELEASE_PICKER
-)
-
-set FLASH_CMD=0x10000 "%~dp0downloaded_firmware.bin"
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
-    pause
-    goto MAIN_MENU
-)
-
-echo [*] Запуск прошивки...
-%ESPTOOL_RUN% --chip esp32 --port %DETECTED_PORT% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect %FLASH_CMD%
-if %ERRORLEVEL% equ 0 (
-    echo.
-    echo ======================================================================
-    echo  🎉 [УСПЕХ] Прошивка %SELECTED_TAG% успешно загружена в ESP32!
-    echo ======================================================================
-    pause
-    goto POST_FLASH_MENU
+echo [*] Прошивка ESP32...
+if "%USE_PYTHON_ESPTOOL%"=="1" (
+    python -m esptool --chip esp32 --port %SELECTED_COM% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect 0x10000 "%DOWNLOADED_BIN%"
 ) else (
+    "%ESPTOOL_EXE%" --chip esp32 --port %SELECTED_COM% --baud 921600 --before default_reset --after hard_reset write_flash -z --flash_mode dio --flash_freq 40m --flash_size detect 0x10000 "%DOWNLOADED_BIN%"
+)
+
+if errorlevel 1 (
     echo.
-    echo [ERROR] Ошибка прошивки.
+    echo ❌ Ошибка при прошивке.
     pause
     goto MAIN_MENU
 )
 
+echo.
+echo 🎉 [УСПЕХ] Прошивка с GitHub успешно загружена!
+pause
+goto POST_FLASH_DIALOG
+
 :: -------------------------------------------------------------
-:: Mode 4: Full Erase Flash Memory
+:: 4. ПОЛНАЯ ОЧИСТКА ПАМЯТИ
 :: -------------------------------------------------------------
-:FULL_ERASE_MENU
+:FLASH_ERASE
 cls
 echo ======================================================================
 echo  🧹 [Режим 4] Полная очистка Flash памяти ESP32
 echo ======================================================================
 echo.
-echo Это полностью сотрет старый зависший WiFiManager и поврежденные настройки.
-echo.
-call :ENSURE_ESPTOOL
-if "%ESPTOOL_ERROR%"=="1" (
-    pause
-    goto MAIN_MENU
-)
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
-    pause
-    goto MAIN_MENU
+call :PREPARE_ESPTOOL
+if "%ESPTOOL_READY%"=="0" ( pause & goto MAIN_MENU )
+
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" ( pause & goto MAIN_MENU )
+
+echo [*] Очистка Flash памяти...
+if "%USE_PYTHON_ESPTOOL%"=="1" (
+    python -m esptool --chip esp32 --port %SELECTED_COM% --baud 921600 erase_flash
+) else (
+    "%ESPTOOL_EXE%" --chip esp32 --port %SELECTED_COM% --baud 921600 erase_flash
 )
 
-echo [*] Полная очистка Flash памяти ESP32...
-%ESPTOOL_RUN% --chip esp32 --port %DETECTED_PORT% --baud 921600 erase_flash
 echo.
-echo [OK] Память полностью очищена! Теперь можно прошить чистую версию (Пункт 1).
+echo [OK] Память полностью очищена!
 pause
 goto MAIN_MENU
 
 :: -------------------------------------------------------------
-:: Mode 5: Wireless OTA update over Wi-Fi
+:: 5. БЫСТРАЯ НАСТРОЙКА WI-FI
 :: -------------------------------------------------------------
-:OTA_WIFI_UPDATE
+:SETUP_WIFI
 cls
 echo ======================================================================
-echo  📶 [Режим 5] Беспроводное OTA-обновление по Wi-Fi (без USB)
-echo ======================================================================
-echo.
-set "ESP_IP="
-set /p ESP_IP="Введите IP адрес ESP32 в локальной сети (например 192.168.170.36): "
-if "%ESP_IP%"=="" (
-    echo [ERROR] IP адрес не указан.
-    pause
-    goto MAIN_MENU
-)
-
-set "OTA_BIN=%~dp0firmware.bin"
-if not exist "%OTA_BIN%" set "OTA_BIN=%~dp0StairsEsp.ino.bin"
-if not exist "%OTA_BIN%" (
-    set /p OTA_BIN="Введите путь к .bin файлу: "
-    set OTA_BIN=%OTA_BIN:"=%
-)
-
-if not exist "%OTA_BIN%" (
-    echo [ERROR] Файл прошивки не найден!
-    pause
-    goto MAIN_MENU
-)
-
-echo [*] Отправка прошивки на http://%ESP_IP%/update ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $wc = New-Object System.Net.WebClient; $bytes = [System.IO.File]::ReadAllBytes('%OTA_BIN%'); $resp = $wc.UploadData('http://%ESP_IP%/update', 'POST', $bytes); Write-Host '🎉 [УСПЕХ] Прошивка передана! Контроллер перезагружается...' } catch { Write-Host ('❌ Ошибка OTA: ' + $_.Exception.Message) }"
-echo.
-pause
-goto MAIN_MENU
-
-:: -------------------------------------------------------------
-:: Mode 6: Fast Wi-Fi setup via USB
-:: -------------------------------------------------------------
-:USB_WIFI_ONLY
-cls
-echo ======================================================================
-echo  📶 [Режим 6] Быстрая настройка Wi-Fi через USB (за 5 секунд)
+echo  📶 [Режим 5] Настройка Wi-Fi через USB
 echo ======================================================================
 echo.
 set "WIFI_SSID="
 set /p WIFI_SSID="1. Имя домашнего Wi-Fi (SSID): "
 set "WIFI_PASS="
 set /p WIFI_PASS="2. Пароль от Wi-Fi: "
-echo.
 
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
-    pause
-    goto MAIN_MENU
-)
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" ( pause & goto MAIN_MENU )
 
-echo [*] Запись Wi-Fi в память ESP32...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$port = new-Object System.IO.Ports.SerialPort '%DETECTED_PORT%', 115200, None, 8, one; $port.Open(); Start-Sleep -Milliseconds 500; $port.WriteLine('SET:wifi_ssid=%WIFI_SSID%'); Start-Sleep -Milliseconds 200; $port.WriteLine('SET:wifi_pass=%WIFI_PASS%'); Start-Sleep -Milliseconds 200; $port.WriteLine('SAVE'); Start-Sleep -Milliseconds 500; $port.Close();"
-echo [OK] Настройки сохранены! Плата подключается к '%WIFI_SSID%'.
 echo.
-set /p OPEN_MON="Открыть Serial Монитор, чтобы увидеть полученный IP адрес? (Y/N) [Y]: "
-if /i "%OPEN_MON%"=="N" goto MAIN_MENU
-goto OPEN_SERIAL_TERMINAL
+echo [*] Отправка данных Wi-Fi в память ESP32...
+powershell -Command "$p=New-Object System.IO.Ports.SerialPort '%SELECTED_COM%',115200,None,8,one;$p.Open();Start-Sleep -Milliseconds 400;$p.WriteLine('SET:wifi_ssid=%WIFI_SSID%');Start-Sleep -Milliseconds 200;$p.WriteLine('SET:wifi_pass=%WIFI_PASS%');Start-Sleep -Milliseconds 200;$p.WriteLine('SAVE');Start-Sleep -Milliseconds 500;$p.Close()"
+
+echo [OK] Настройки сохранены! Плата перезагружается и подключается к '%WIFI_SSID%'.
+echo.
+pause
+goto MAIN_MENU
 
 :: -------------------------------------------------------------
-:: Mode 7: Full USB Configuration Wizard
+:: 6. ПОЛНЫЙ МАСТЕР НАСТРОЙКИ
 :: -------------------------------------------------------------
-:USB_SETUP_WIZARD
+:SETUP_WIZARD
 cls
 echo ======================================================================
-echo  ⚙️  [Режим 7] Полный мастер настройки параметров через USB
+echo  ⚙️  [Режим 6] Мастер настройки параметров лестницы
 echo ======================================================================
 echo.
-set /p CFG_WIFI_SSID="1. Имя домашнего Wi-Fi (SSID): "
-set /p CFG_WIFI_PASS="2. Пароль от Wi-Fi: "
-set /p CFG_STEPS="3. Количество ступеней лестницы (1-32) [16]: "
-set /p CFG_LEDS="4. Количество LED диодов на 1 ступень (1-60) [30]: "
-set /p CFG_SPEED="5. Скорость шага в мс (20-250) [60]: "
-set /p CFG_HOLD="6. Время свечения после прохода в сек (3-60) [15]: "
-set /p CFG_BRI="7. Основная яркость (10-255) [220]: "
-set /p CFG_PIN_LED="8. GPIO пин ленты WS2812B (Data) [18]: "
-set /p CFG_PIN_BOT="9. GPIO пин нижнего датчика [19]: "
-set /p CFG_PIN_TOP="10. GPIO пин верхнего датчика [21]: "
+set /p CFG_SSID="1. Имя Wi-Fi (SSID): "
+set /p CFG_PASS="2. Пароль от Wi-Fi: "
+set /p CFG_STEPS="3. Количество ступеней [16]: "
+set /p CFG_LEDS="4. Диодов на ступень [30]: "
+set /p CFG_SPEED="5. Скорость шага в мс [60]: "
+set /p CFG_HOLD="6. Время свечения в сек [15]: "
+set /p CFG_BRI="7. Яркость (10-255) [220]: "
+set /p CFG_PIN_LED="8. GPIO пин ленты [4]: "
+set /p CFG_PIN_BOT="9. GPIO нижнего датчика [22]: "
+set /p CFG_PIN_TOP="10. GPIO верхнего датчика [23]: "
 
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
-    pause
-    goto MAIN_MENU
-)
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" ( pause & goto MAIN_MENU )
 
 echo.
-echo [*] Запись всех параметров в память ESP32...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$p = new-Object System.IO.Ports.SerialPort '%DETECTED_PORT%', 115200, None, 8, one; $p.Open(); Start-Sleep -Milliseconds 500;" ^
-    "if ('%CFG_WIFI_SSID%' -ne '') { $p.WriteLine('SET:wifi_ssid=%CFG_WIFI_SSID%'); Start-Sleep -Milliseconds 150; }" ^
-    "if ('%CFG_WIFI_PASS%' -ne '') { $p.WriteLine('SET:wifi_pass=%CFG_WIFI_PASS%'); Start-Sleep -Milliseconds 150; }" ^
+echo [*] Запись настроек в ESP32...
+powershell -Command ^
+    "$p=New-Object System.IO.Ports.SerialPort '%SELECTED_COM%',115200,None,8,one;$p.Open();Start-Sleep -Milliseconds 500;" ^
+    "if ('%CFG_SSID%' -ne '') { $p.WriteLine('SET:wifi_ssid=%CFG_SSID%'); Start-Sleep -Milliseconds 150; }" ^
+    "if ('%CFG_PASS%' -ne '') { $p.WriteLine('SET:wifi_pass=%CFG_PASS%'); Start-Sleep -Milliseconds 150; }" ^
     "if ('%CFG_STEPS%' -ne '') { $p.WriteLine('SET:step_count=%CFG_STEPS%'); Start-Sleep -Milliseconds 150; }" ^
     "if ('%CFG_LEDS%' -ne '') { $p.WriteLine('SET:leds_per_step=%CFG_LEDS%'); Start-Sleep -Milliseconds 150; }" ^
     "if ('%CFG_SPEED%' -ne '') { $p.WriteLine('SET:step_speed=%CFG_SPEED%'); Start-Sleep -Milliseconds 150; }" ^
@@ -434,141 +361,132 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "if ('%CFG_PIN_TOP%' -ne '') { $p.WriteLine('SET:pin_sensor_top=%CFG_PIN_TOP%'); Start-Sleep -Milliseconds 150; }" ^
     "$p.WriteLine('SAVE'); Start-Sleep -Milliseconds 500; $p.Close();"
 
-echo [OK] Все параметры успешно сохранены!
+echo [OK] Все параметры сохранены!
 pause
 goto MAIN_MENU
 
 :: -------------------------------------------------------------
-:: Mode 8: Live Serial Terminal
+:: 7. МОНИТОР SERIAL ПОРТА
 :: -------------------------------------------------------------
-:OPEN_SERIAL_TERMINAL
+:SERIAL_MONITOR
 cls
-call :DETECT_PORT
-if "%DETECTED_PORT%"=="" (
-    pause
-    goto MAIN_MENU
-)
+call :FIND_COM_PORT
+if "%SELECTED_COM%"=="" ( pause & goto MAIN_MENU )
 
-echo [INFO] Подключение к монитору порта %DETECTED_PORT% (115200 бод)...
-echo [INFO] Для выхода в главное меню нажмите Ctrl+C или закройте окно
-echo ----------------------------------------------------------------------
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$port = new-Object System.IO.Ports.SerialPort '%DETECTED_PORT%', 115200, None, 8, one; $port.Open(); while($true){ if($port.BytesToRead -gt 0){ Write-Host -NoNewline $port.ReadExisting() } Start-Sleep -Milliseconds 30 }"
+echo ======================================================================
+echo  📟 Подключение к %SELECTED_COM% (115200 бод)...
+echo  💡 Нажмите Ctrl+C для выхода в главное меню
+echo ======================================================================
+echo.
+powershell -Command "$p=New-Object System.IO.Ports.SerialPort '%SELECTED_COM%',115200,None,8,one;$p.Open();while($true){if($p.BytesToRead -gt 0){Write-Host -NoNewline $p.ReadExisting()} Start-Sleep -Milliseconds 25}"
 pause
 goto MAIN_MENU
 
 :: -------------------------------------------------------------
-:: Helper: Detect COM Port
+:: Вспомогательный диалог после прошивки
 :: -------------------------------------------------------------
-:DETECT_PORT
-set "DETECTED_PORT="
-echo [*] Поиск подключенного COM-порта ESP32...
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "try {" ^
-    "  $rawPorts = [System.IO.Ports.SerialPort]::GetPortNames();" ^
-    "  if (-not $rawPorts -or $rawPorts.Length -eq 0) {" ^
-    "    [System.IO.File]::WriteAllText('%temp%\esp_port.txt', 'NO_PORT');" ^
-    "    exit 0;" ^
-    "  }" ^
-    "  $ports = @($rawPorts | Sort-Object);" ^
-    "  $usbPorts = @($ports | Where-Object { $_ -ne 'COM1' });" ^
-    "  $selected = if ($usbPorts.Count -gt 0) { $usbPorts[0] } else { $ports[0] };" ^
-    "  [System.IO.File]::WriteAllText('%temp%\esp_port.txt', $selected);" ^
-    "} catch {" ^
-    "  [System.IO.File]::WriteAllText('%temp%\esp_port.txt', 'NO_PORT');" ^
-    "}"
-
-if exist "%temp%\esp_port.txt" (
-    set /p DETECTED_PORT=<"%temp%\esp_port.txt"
-    del /f /q "%temp%\esp_port.txt" >nul 2>&1
-)
-
-if "%DETECTED_PORT%"=="NO_PORT" set "DETECTED_PORT="
-
-if "%DETECTED_PORT%"=="" (
-    echo [!] COM-порт не определен автоматически.
-    set /p DETECTED_PORT="Укажите номер COM-порта вручную (например COM3, COM8, COM12): "
-)
-
-if "%DETECTED_PORT%"=="" (
-    echo [ERROR] Не удалось определить COM-порт. Убедитесь, что плата подключена.
-    exit /b 1
-)
-
-echo [OK] Выбран порт: %DETECTED_PORT%
-exit /b 0
-
-:: -------------------------------------------------------------
-:: Helper: Ensure esptool
-:: -------------------------------------------------------------
-:ENSURE_ESPTOOL
-set "ESPTOOL_ERROR=0"
-
-:: 1. Check local esptool.exe in current directory
-if exist "%~dp0esptool.exe" (
-    set "ESPTOOL_RUN="%~dp0esptool.exe""
-    exit /b 0
-)
-
-:: 2. Check tools\esptool.exe
-if exist "%~dp0tools\esptool.exe" (
-    set "ESPTOOL_RUN="%~dp0tools\esptool.exe""
-    exit /b 0
-)
-
-:: 3. Check system PATH for esptool
-where esptool.exe >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    set "ESPTOOL_RUN=esptool.exe"
-    exit /b 0
-)
-
-where esptool.py >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    set "ESPTOOL_RUN=python -m esptool"
-    exit /b 0
-)
-
-:: 4. Try to download standalone esptool.exe via PowerShell
-echo [*] Загрузка утилиты прошивки esptool.exe...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
-    "try {" ^
-    "  $zipUrl = 'https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip';" ^
-    "  $tempZip = '%temp%\esptool_tmp.zip';" ^
-    "  (New-Object System.Net.WebClient).DownloadFile($zipUrl, $tempZip);" ^
-    "  Expand-Archive -Path $tempZip -DestinationPath '%temp%\esptool_extracted' -Force;" ^
-    "  $foundExe = Get-ChildItem -Path '%temp%\esptool_extracted' -Filter 'esptool.exe' -Recurse | Select-Object -First 1;" ^
-    "  if ($foundExe) { Copy-Item $foundExe.FullName -Destination '%~dp0esptool.exe' -Force; Write-Host '[OK] esptool.exe успешно загружен!' }" ^
-    "  Remove-Item $tempZip -Force -ErrorAction SilentlyContinue;" ^
-    "  Remove-Item '%temp%\esptool_extracted' -Recurse -Force -ErrorAction SilentlyContinue;" ^
-    "} catch {" ^
-    "  Write-Host ('[!] Не удалось автоматически скачать esptool.exe: ' + $_.Exception.Message);" ^
-    "}"
-
-if exist "%~dp0esptool.exe" (
-    set "ESPTOOL_RUN="%~dp0esptool.exe""
-    exit /b 0
-)
-
-set "ESPTOOL_ERROR=1"
-exit /b 1
-
-:: -------------------------------------------------------------
-:: Post Flash Navigation Menu
-:: -------------------------------------------------------------
-:POST_FLASH_MENU
-echo.
+:POST_FLASH_DIALOG
 echo Выберите следующее действие:
 echo   [1] 📶 Настроить Wi-Fi прямо сейчас через USB (Рекомендуется)
-echo   [2] 📟 Открыть монитор Serial порта (Посмотреть IP)
+echo   [2] 📟 Открыть монитор Serial порта (Посмотреть IP адрес)
 echo   [3] 🔙 Главное меню
 echo.
-set /p NEXT_ACTION="Ваш выбор (1-3) [По умолчанию 1]: "
-if "%NEXT_ACTION%"=="" set NEXT_ACTION=1
-if "%NEXT_ACTION%"=="1" goto USB_WIFI_ONLY
-if "%NEXT_ACTION%"=="2" goto OPEN_SERIAL_TERMINAL
+set "POST_ACTION="
+set /p POST_ACTION="Ваш выбор (1-3) [По умолчанию 1]: "
+if "%POST_ACTION%"=="" set POST_ACTION=1
+if "%POST_ACTION%"=="1" goto SETUP_WIFI
+if "%POST_ACTION%"=="2" goto SERIAL_MONITOR
 goto MAIN_MENU
 
-:EXIT_SCRIPT
+:: -------------------------------------------------------------
+:: Хелпер: Поиск esptool
+:: -------------------------------------------------------------
+:PREPARE_ESPTOOL
+set "ESPTOOL_READY=0"
+set "USE_PYTHON_ESPTOOL=0"
+set "ESPTOOL_EXE="
+
+if exist "%~dp0esptool.exe" (
+    set "ESPTOOL_EXE=%~dp0esptool.exe"
+    set "ESPTOOL_READY=1"
+    goto :EOF
+)
+
+if exist "%~dp0tools\esptool.exe" (
+    set "ESPTOOL_EXE=%~dp0tools\esptool.exe"
+    set "ESPTOOL_READY=1"
+    goto :EOF
+)
+
+where esptool.exe >nul 2>&1
+if not errorlevel 1 (
+    set "ESPTOOL_EXE=esptool.exe"
+    set "ESPTOOL_READY=1"
+    goto :EOF
+)
+
+where python >nul 2>&1
+if not errorlevel 1 (
+    python -m esptool version >nul 2>&1
+    if not errorlevel 1 (
+        set "USE_PYTHON_ESPTOOL=1"
+        set "ESPTOOL_READY=1"
+        goto :EOF
+    )
+)
+
+:: Скачивание esptool.exe
+echo [*] Загрузка официального esptool.exe от Espressif...
+powershell -Command ^
+    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+    "try {" ^
+    "  $url = 'https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip';" ^
+    "  $z = '%temp%\esptool_tmp.zip';" ^
+    "  (New-Object System.Net.WebClient).DownloadFile($url, $z);" ^
+    "  Expand-Archive -Path $z -DestinationPath '%temp%\esptool_unzip' -Force;" ^
+    "  $exe = Get-ChildItem -Path '%temp%\esptool_unzip' -Filter 'esptool.exe' -Recurse | Select-Object -First 1;" ^
+    "  if ($exe) { Copy-Item $exe.FullName -Destination '%~dp0esptool.exe' -Force }" ^
+    "  Remove-Item $z -Force -ErrorAction SilentlyContinue;" ^
+    "  Remove-Item '%temp%\esptool_unzip' -Recurse -Force -ErrorAction SilentlyContinue;" ^
+    "} catch {}"
+
+if exist "%~dp0esptool.exe" (
+    set "ESPTOOL_EXE=%~dp0esptool.exe"
+    set "ESPTOOL_READY=1"
+    echo [OK] esptool.exe успешно подготовлен!
+)
+goto :EOF
+
+:: -------------------------------------------------------------
+:: Хелпер: Поиск COM-порта
+:: -------------------------------------------------------------
+:FIND_COM_PORT
+set "SELECTED_COM="
+echo [*] Поиск подключенного COM-порта ESP32...
+
+powershell -Command ^
+    "$p = @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object);" ^
+    "if ($p.Count -eq 0) { [System.IO.File]::WriteAllText('%temp%\esp_port_sel.txt', 'NONE'); exit };" ^
+    "$usb = @($p | Where-Object { $_ -ne 'COM1' });" ^
+    "$sel = if ($usb.Count -gt 0) { $usb[0] } else { $p[0] };" ^
+    "[System.IO.File]::WriteAllText('%temp%\esp_port_sel.txt', $sel);"
+
+if exist "%temp%\esp_port_sel.txt" (
+    set /p SELECTED_COM=<"%temp%\esp_port_sel.txt"
+    del /f /q "%temp%\esp_port_sel.txt" >nul 2>&1
+)
+
+if "%SELECTED_COM%"=="NONE" set "SELECTED_COM="
+
+if "%SELECTED_COM%"=="" (
+    echo [!] COM-порт не найден автоматически.
+    set /p SELECTED_COM="Введите имя COM-порта вручную (например COM3 или COM12): "
+)
+
+if not "%SELECTED_COM%"=="" (
+    echo [OK] Выбран порт: %SELECTED_COM%
+)
+goto :EOF
+
+:SCRIPT_EXIT
 exit /b 0

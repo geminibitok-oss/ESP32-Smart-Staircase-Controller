@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "esp32-stairs-ui",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,8 +7,9 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "clean": "rimraf dist server.js",
+    "lint": "tsc --noEmit",
+    "check-build": "npm ci && npm run build"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -21,8 +22,7 @@
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "vite": "^6.2.3"
+    "react-dom": "^19.0.1"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
@@ -30,6 +30,7 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "rimraf": "^5.0.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
